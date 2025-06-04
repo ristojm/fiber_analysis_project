@@ -1,670 +1,602 @@
 """
-SEM Fiber Analysis System - Porosity Analysis Module
-Phase 2A: Comprehensive pore detection, measurement, and analysis
+Porosity Analysis Module for SEM Fiber Analysis System
+
+This module provides comprehensive porosity analysis for fiber samples including:
+- Pore detection and segmentation
+- Pore size distribution analysis
+- Porosity quantification
+- Statistical analysis and visualization
+
+Author: Fiber Analysis Project
+Date: 2025
 """
 
-import cv2
 import numpy as np
-from skimage import filters, morphology, measure, feature, segmentation
+import cv2
+from skimage import (
+    segmentation, filters, morphology, measure, 
+    feature, restoration, exposure
+)
+from skimage.morphology import disk, remove_small_objects, binary_closing
 from scipy import ndimage, spatial
-from typing import Tuple, Dict, List, Optional
-import matplotlib.pyplot as plt
+from sklearn.cluster import DBSCAN
 import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from typing import Tuple, Dict, List, Optional, Any
+import warnings
+warnings.filterwarnings('ignore')
+
 
 class PorosityAnalyzer:
     """
-    Comprehensive porosity analysis for fiber cross-sections.
-    Detects, measures, and analyzes pores within fiber walls.
+    Comprehensive porosity analysis for SEM fiber images.
+    
+    This class handles pore detection, measurement, and statistical analysis
+    for both hollow fibers and solid filaments.
     """
     
-    def __init__(self,
-                 min_pore_area: int = 10,              # Minimum pore area in pixels
-                 max_pore_area_ratio: float = 0.05,    # Max pore as fraction of fiber area
-                 pore_circularity_threshold: float = 0.1,  # Very lenient for irregular pores
-                 edge_exclusion_width: int = 5,        # Exclude pores near fiber edge
-                 adaptive_threshold: bool = True):      # Use adaptive thresholding
+    def __init__(self, config: Optional[Dict] = None):
         """
-        Initialize porosity analyzer.
+        Initialize the PorosityAnalyzer with configuration parameters.
         
         Args:
-            min_pore_area: Minimum pore area in pixels
-            max_pore_area_ratio: Maximum pore area as fraction of fiber area
-            pore_circularity_threshold: Minimum circularity for valid pores
-            edge_exclusion_width: Width to exclude near fiber edges (pixels)
-            adaptive_threshold: Whether to use adaptive thresholding
+            config: Dictionary containing analysis parameters
         """
-        self.min_pore_area = min_pore_area
-        self.max_pore_area_ratio = max_pore_area_ratio
-        self.pore_circularity_threshold = pore_circularity_threshold
-        self.edge_exclusion_width = edge_exclusion_width
-        self.adaptive_threshold = adaptive_threshold
+        self.default_config = {
+            'pore_detection': {
+                'min_pore_area': 5,  # minimum pore area in pixels
+                'max_pore_area': 10000,  # maximum pore area in pixels
+                'contrast_threshold': 0.3,  # contrast threshold for pore detection
+                'gaussian_sigma': 1.0,  # Gaussian blur sigma
+                'morphology_disk_size': 2,  # morphological operations disk size
+                'remove_border_pores': True,  # remove pores touching image border
+            },
+            'segmentation': {
+                'method': 'multi_otsu',  # 'otsu', 'multi_otsu', 'adaptive', 'watershed'
+                'watershed_markers': 'distance',  # 'distance', 'h_maxima'
+                'adaptive_block_size': 51,  # block size for adaptive thresholding
+                'adaptive_c': 10,  # constant for adaptive thresholding
+            },
+            'analysis': {
+                'circularity_weight': 0.3,  # weight for circularity in pore scoring
+                'aspect_ratio_weight': 0.2,  # weight for aspect ratio in pore scoring
+                'size_bins': 50,  # number of bins for size distribution
+                'percentiles': [25, 50, 75, 90, 95],  # percentiles to calculate
+            },
+            'filtering': {
+                'denoise_method': 'bilateral',  # 'bilateral', 'gaussian', 'median'
+                'enhance_contrast': True,  # apply contrast enhancement
+                'clahe_clip_limit': 2.0,  # CLAHE clip limit
+                'clahe_tile_size': (8, 8),  # CLAHE tile grid size
+            }
+        }
+        
+        self.config = self.default_config.copy()
+        if config:
+            self._update_config(config)
+        
+        self.results = {}
+        self.pore_data = None
+        self.fiber_mask = None
+        self.scale_factor = None
+        
+    def _update_config(self, new_config: Dict):
+        """Recursively update configuration dictionary."""
+        for key, value in new_config.items():
+            if key in self.config and isinstance(self.config[key], dict):
+                self.config[key].update(value)
+            else:
+                self.config[key] = value
     
-    def calculate_adaptive_pore_thresholds(self, fiber_area: float, scale_factor: float = 1.0) -> Dict:
+    def analyze_porosity(self, 
+                        image: np.ndarray, 
+                        fiber_mask: np.ndarray,
+                        scale_factor: float = 1.0,
+                        fiber_type: str = 'hollow_fiber') -> Dict[str, Any]:
         """
-        Calculate adaptive thresholds for pore detection based on fiber characteristics.
+        Main porosity analysis function.
         
         Args:
-            fiber_area: Area of the fiber in pixels
+            image: Input SEM image (grayscale)
+            fiber_mask: Binary mask of fiber regions
             scale_factor: Micrometers per pixel conversion factor
+            fiber_type: Type of fiber ('hollow_fiber' or 'filament')
             
         Returns:
-            Dictionary of adaptive thresholds
+            Dictionary containing comprehensive porosity analysis results
         """
-        # Scale-aware minimum pore area
-        min_pore_area = max(self.min_pore_area, int(fiber_area * 0.0001))  # 0.01% of fiber
+        self.fiber_mask = fiber_mask.astype(bool)
+        self.scale_factor = scale_factor
         
-        # Maximum pore area
-        max_pore_area = int(fiber_area * self.max_pore_area_ratio)
+        print("Starting porosity analysis...")
         
-        # Adaptive morphological kernel size
-        fiber_radius = np.sqrt(fiber_area / np.pi)
-        kernel_size = max(3, min(15, int(fiber_radius / 50)))
-        if kernel_size % 2 == 0:
-            kernel_size += 1
+        # Step 1: Preprocess image
+        processed_image = self._preprocess_image(image)
         
-        # Edge exclusion width (scale-aware)
-        edge_exclusion = max(self.edge_exclusion_width, int(fiber_radius / 30))
+        # Step 2: Detect pores within fiber regions
+        pore_mask, pore_labels = self._detect_pores(processed_image, fiber_mask)
         
-        thresholds = {
-            'min_pore_area': min_pore_area,
-            'max_pore_area': max_pore_area,
-            'kernel_size': kernel_size,
-            'edge_exclusion_width': edge_exclusion,
-            'fiber_area': fiber_area,
-            'fiber_radius': fiber_radius,
-            'scale_factor': scale_factor
+        # Step 3: Extract pore properties
+        pore_properties = self._extract_pore_properties(pore_labels, processed_image)
+        
+        # Step 4: Filter and validate pores
+        valid_pores = self._filter_pores(pore_properties)
+        
+        # Step 5: Calculate porosity metrics
+        porosity_metrics = self._calculate_porosity_metrics(valid_pores, fiber_mask)
+        
+        # Step 6: Analyze size distribution
+        size_distribution = self._analyze_size_distribution(valid_pores)
+        
+        # Step 7: Spatial analysis
+        spatial_analysis = self._analyze_spatial_distribution(valid_pores, fiber_mask)
+        
+        # Compile results
+        self.results = {
+            'porosity_metrics': porosity_metrics,
+            'size_distribution': size_distribution,
+            'spatial_analysis': spatial_analysis,
+            'pore_properties': valid_pores,
+            'pore_mask': pore_mask,
+            'pore_labels': pore_labels,
+            'fiber_type': fiber_type,
+            'scale_factor': scale_factor,
+            'config_used': self.config.copy()
         }
         
-        return thresholds
+        self.pore_data = valid_pores
+        
+        print(f"Porosity analysis complete. Found {len(valid_pores)} valid pores.")
+        return self.results
     
-    def segment_pores(self, image: np.ndarray, fiber_mask: np.ndarray, 
-                     exclude_lumen: bool = True, lumen_mask: Optional[np.ndarray] = None) -> np.ndarray:
+    def _preprocess_image(self, image: np.ndarray) -> np.ndarray:
         """
-        Segment pores within the fiber wall region.
+        Preprocess image for optimal pore detection.
         
         Args:
-            image: Original grayscale image
-            fiber_mask: Binary mask of the fiber region
-            exclude_lumen: Whether to exclude the central lumen from analysis
-            lumen_mask: Optional binary mask of the lumen region
+            image: Input grayscale image
             
         Returns:
-            Binary mask of detected pores
+            Preprocessed image
         """
-        # Create analysis region (fiber minus lumen if specified)
-        analysis_mask = fiber_mask.copy()
+        processed = image.copy()
         
-        if exclude_lumen and lumen_mask is not None:
-            analysis_mask = cv2.bitwise_and(analysis_mask, cv2.bitwise_not(lumen_mask))
+        # Denoise
+        if self.config['filtering']['denoise_method'] == 'bilateral':
+            processed = cv2.bilateralFilter(processed, 9, 75, 75)
+        elif self.config['filtering']['denoise_method'] == 'gaussian':
+            processed = filters.gaussian(processed, sigma=self.config['pore_detection']['gaussian_sigma'])
+        elif self.config['filtering']['denoise_method'] == 'median':
+            processed = filters.median(processed, disk(2))
         
-        # Extract the fiber wall region
-        fiber_region = cv2.bitwise_and(image, image, mask=analysis_mask)
+        # Enhance contrast
+        if self.config['filtering']['enhance_contrast']:
+            clahe = cv2.createCLAHE(
+                clipLimit=self.config['filtering']['clahe_clip_limit'],
+                tileGridSize=self.config['filtering']['clahe_tile_size']
+            )
+            processed = clahe.apply(processed.astype(np.uint8))
         
-        # Get fiber pixels for statistics
-        fiber_pixels = fiber_region[analysis_mask > 0]
+        return processed
+    
+    def _detect_pores(self, image: np.ndarray, fiber_mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Detect pores within fiber regions using multiple segmentation approaches.
         
+        Args:
+            image: Preprocessed image
+            fiber_mask: Binary mask of fiber regions
+            
+        Returns:
+            Tuple of (pore_mask, pore_labels)
+        """
+        # Restrict analysis to fiber regions only
+        fiber_region = image * fiber_mask
+        
+        method = self.config['segmentation']['method']
+        
+        if method == 'multi_otsu':
+            pore_mask = self._multi_otsu_segmentation(fiber_region, fiber_mask)
+        elif method == 'otsu':
+            pore_mask = self._otsu_segmentation(fiber_region, fiber_mask)
+        elif method == 'adaptive':
+            pore_mask = self._adaptive_segmentation(fiber_region, fiber_mask)
+        elif method == 'watershed':
+            pore_mask = self._watershed_segmentation(fiber_region, fiber_mask)
+        else:
+            raise ValueError(f"Unknown segmentation method: {method}")
+        
+        # Post-process pore mask
+        pore_mask = self._postprocess_pore_mask(pore_mask, fiber_mask)
+        
+        # Label connected components
+        pore_labels = measure.label(pore_mask)
+        
+        return pore_mask, pore_labels
+    
+    def _multi_otsu_segmentation(self, image: np.ndarray, fiber_mask: np.ndarray) -> np.ndarray:
+        """Multi-Otsu thresholding for pore detection."""
+        # Apply multi-Otsu to get multiple thresholds
+        fiber_pixels = image[fiber_mask > 0]
         if len(fiber_pixels) == 0:
-            return np.zeros_like(image, dtype=np.uint8)
+            return np.zeros_like(image, dtype=bool)
         
-        # Multiple thresholding approaches for robust pore detection
-        pore_masks = []
-        
-        # Method 1: Percentile-based thresholding
-        for percentile in [10, 15, 20]:
-            threshold = np.percentile(fiber_pixels, percentile)
-            _, pore_binary = cv2.threshold(fiber_region, threshold, 255, cv2.THRESH_BINARY_INV)
-            pore_binary = cv2.bitwise_and(pore_binary, analysis_mask)
-            pore_masks.append(pore_binary)
-        
-        # Method 2: Adaptive thresholding within fiber
-        if self.adaptive_threshold:
-            # Create a working region for adaptive threshold
-            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-            eroded_mask = cv2.erode(analysis_mask, kernel, iterations=2)
-            
-            if np.sum(eroded_mask) > 100:  # Ensure enough pixels for adaptive threshold
-                try:
-                    adaptive_binary = cv2.adaptiveThreshold(
-                        image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                        cv2.THRESH_BINARY_INV, 15, 5
-                    )
-                    adaptive_binary = cv2.bitwise_and(adaptive_binary, eroded_mask)
-                    pore_masks.append(adaptive_binary)
-                except:
-                    pass  # Skip if adaptive threshold fails
-        
-        # Method 3: Otsu thresholding on fiber region
+        # Use 3 classes: background, fiber material, pores
         try:
-            # Create a sub-image of just the fiber region for better Otsu performance
-            fiber_bbox = cv2.boundingRect(np.where(analysis_mask > 0))
-            if fiber_bbox[2] > 10 and fiber_bbox[3] > 10:  # Ensure reasonable size
-                x, y, w, h = fiber_bbox
-                fiber_sub = fiber_region[y:y+h, x:x+w]
-                mask_sub = analysis_mask[y:y+h, x:x+w]
-                
-                # Apply Otsu to sub-region
-                fiber_sub_pixels = fiber_sub[mask_sub > 0]
-                if len(fiber_sub_pixels) > 100:
-                    otsu_threshold = filters.threshold_otsu(fiber_sub_pixels)
-                    _, otsu_binary = cv2.threshold(fiber_region, otsu_threshold, 255, cv2.THRESH_BINARY_INV)
-                    otsu_binary = cv2.bitwise_and(otsu_binary, analysis_mask)
-                    pore_masks.append(otsu_binary)
+            thresholds = filters.threshold_multiotsu(fiber_pixels, classes=3)
+            # Pores are typically the darkest regions
+            pore_threshold = thresholds[0]
+            pore_mask = (image < pore_threshold) & fiber_mask
         except:
-            pass  # Skip if Otsu fails
+            # Fallback to regular Otsu
+            threshold = filters.threshold_otsu(fiber_pixels)
+            pore_mask = (image < threshold * 0.7) & fiber_mask  # More aggressive threshold
         
-        # Combine results using intersection and union strategies
-        if len(pore_masks) == 0:
-            return np.zeros_like(image, dtype=np.uint8)
-        
-        # Conservative approach: intersection of multiple methods
-        consensus_mask = pore_masks[0].copy()
-        for mask in pore_masks[1:]:
-            consensus_mask = cv2.bitwise_and(consensus_mask, mask)
-        
-        # Liberal approach: union of multiple methods
-        union_mask = pore_masks[0].copy()
-        for mask in pore_masks[1:]:
-            union_mask = cv2.bitwise_or(union_mask, mask)
-        
-        # Hybrid approach: use consensus for large pores, union for small ones
-        # This helps capture both obvious pores and subtle ones
-        final_mask = consensus_mask.copy()
-        
-        # Add small pores from union that aren't noise
-        union_only = cv2.bitwise_and(union_mask, cv2.bitwise_not(consensus_mask))
-        
-        # Filter small additions by size and circularity
-        contours, _ = cv2.findContours(union_only, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if area >= self.min_pore_area and area <= 100:  # Small pores only
-                perimeter = cv2.arcLength(contour, True)
-                circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
-                if circularity >= self.pore_circularity_threshold:
-                    cv2.fillPoly(final_mask, [contour], 255)
-        
-        return final_mask
+        return pore_mask
     
-    def filter_pores_by_criteria(self, pore_mask: np.ndarray, fiber_contour: np.ndarray, 
-                                thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
+    def _otsu_segmentation(self, image: np.ndarray, fiber_mask: np.ndarray) -> np.ndarray:
+        """Standard Otsu thresholding for pore detection."""
+        fiber_pixels = image[fiber_mask > 0]
+        if len(fiber_pixels) == 0:
+            return np.zeros_like(image, dtype=bool)
+        
+        threshold = filters.threshold_otsu(fiber_pixels)
+        # Use a more aggressive threshold for pore detection
+        pore_threshold = threshold * (1 - self.config['pore_detection']['contrast_threshold'])
+        pore_mask = (image < pore_threshold) & fiber_mask
+        
+        return pore_mask
+    
+    def _adaptive_segmentation(self, image: np.ndarray, fiber_mask: np.ndarray) -> np.ndarray:
+        """Adaptive thresholding for pore detection."""
+        block_size = self.config['segmentation']['adaptive_block_size']
+        C = self.config['segmentation']['adaptive_c']
+        
+        # Ensure block_size is odd
+        if block_size % 2 == 0:
+            block_size += 1
+        
+        adaptive_thresh = cv2.adaptiveThreshold(
+            image.astype(np.uint8), 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV, block_size, C
+        )
+        
+        pore_mask = (adaptive_thresh > 0) & fiber_mask
+        return pore_mask
+    
+    def _watershed_segmentation(self, image: np.ndarray, fiber_mask: np.ndarray) -> np.ndarray:
+        """Watershed segmentation for pore detection."""
+        # Start with basic thresholding
+        threshold = filters.threshold_otsu(image[fiber_mask > 0]) if np.any(fiber_mask) else 0
+        binary = (image < threshold * 0.8) & fiber_mask
+        
+        if not np.any(binary):
+            return binary
+        
+        # Distance transform for markers
+        if self.config['segmentation']['watershed_markers'] == 'distance':
+            distance = ndimage.distance_transform_edt(binary)
+            local_maxima = feature.peak_local_maxima(distance, min_distance=5, threshold_abs=0.3*distance.max())
+            markers = np.zeros_like(binary, dtype=int)
+            if len(local_maxima[0]) > 0:
+                markers[local_maxima] = np.arange(1, len(local_maxima[0]) + 1)
+        else:
+            # H-maxima markers
+            distance = ndimage.distance_transform_edt(binary)
+            markers = morphology.h_maxima(distance, h=distance.max()*0.3)
+            markers = measure.label(markers)
+        
+        # Watershed
+        if np.max(markers) > 0:
+            labels = segmentation.watershed(-distance, markers, mask=binary)
+            pore_mask = labels > 0
+        else:
+            pore_mask = binary
+        
+        return pore_mask
+    
+    def _postprocess_pore_mask(self, pore_mask: np.ndarray, fiber_mask: np.ndarray) -> np.ndarray:
+        """Post-process pore mask to remove artifacts and noise."""
+        # Remove small objects
+        min_area = self.config['pore_detection']['min_pore_area']
+        pore_mask = remove_small_objects(pore_mask, min_size=min_area)
+        
+        # Morphological closing to fill small gaps
+        disk_size = self.config['pore_detection']['morphology_disk_size']
+        pore_mask = binary_closing(pore_mask, disk(disk_size))
+        
+        # Remove pores touching border if specified
+        if self.config['pore_detection']['remove_border_pores']:
+            pore_mask = segmentation.clear_border(pore_mask)
+        
+        # Ensure pores are within fiber regions
+        pore_mask = pore_mask & fiber_mask
+        
+        return pore_mask
+    
+    def _extract_pore_properties(self, pore_labels: np.ndarray, image: np.ndarray) -> List[Dict]:
         """
-        Filter detected pores by size, shape, and position criteria.
+        Extract detailed properties for each detected pore.
         
         Args:
-            pore_mask: Binary mask of detected pores
-            fiber_contour: Contour of the fiber
-            thresholds: Adaptive thresholds dictionary
+            pore_labels: Labeled pore regions
+            image: Original image for intensity measurements
             
         Returns:
-            Tuple of (filtered_pore_mask, pore_properties_list)
+            List of dictionaries containing pore properties
         """
-        # Create edge exclusion mask
-        fiber_mask = np.zeros_like(pore_mask)
-        cv2.fillPoly(fiber_mask, [fiber_contour], 255)
+        properties = measure.regionprops(pore_labels, intensity_image=image)
+        pore_data = []
         
-        # Erode fiber mask to exclude edge regions
-        edge_kernel_size = thresholds['edge_exclusion_width']
-        edge_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (edge_kernel_size, edge_kernel_size))
-        inner_fiber_mask = cv2.erode(fiber_mask, edge_kernel, iterations=1)
+        for prop in properties:
+            # Basic geometric properties
+            area_pixels = prop.area
+            area_um2 = area_pixels * (self.scale_factor ** 2)
+            
+            # Equivalent diameter (diameter of circle with same area)
+            equiv_diameter_pixels = prop.equivalent_diameter
+            equiv_diameter_um = equiv_diameter_pixels * self.scale_factor
+            
+            # Major and minor axis lengths
+            major_axis_um = prop.major_axis_length * self.scale_factor
+            minor_axis_um = prop.minor_axis_length * self.scale_factor
+            
+            # Shape descriptors
+            aspect_ratio = major_axis_um / minor_axis_um if minor_axis_um > 0 else 1
+            circularity = 4 * np.pi * area_pixels / (prop.perimeter ** 2) if prop.perimeter > 0 else 0
+            solidity = prop.solidity
+            extent = prop.extent
+            
+            # Position
+            centroid_y, centroid_x = prop.centroid
+            
+            # Intensity properties
+            mean_intensity = prop.mean_intensity
+            max_intensity = prop.max_intensity
+            min_intensity = prop.min_intensity
+            
+            # Bounding box
+            bbox = prop.bbox  # (min_row, min_col, max_row, max_col)
+            
+            pore_info = {
+                'label': prop.label,
+                'area_pixels': area_pixels,
+                'area_um2': area_um2,
+                'equivalent_diameter_pixels': equiv_diameter_pixels,
+                'equivalent_diameter_um': equiv_diameter_um,
+                'major_axis_um': major_axis_um,
+                'minor_axis_um': minor_axis_um,
+                'aspect_ratio': aspect_ratio,
+                'circularity': circularity,
+                'solidity': solidity,
+                'extent': extent,
+                'centroid_x': centroid_x,
+                'centroid_y': centroid_y,
+                'mean_intensity': mean_intensity,
+                'max_intensity': max_intensity,
+                'min_intensity': min_intensity,
+                'perimeter_pixels': prop.perimeter,
+                'perimeter_um': prop.perimeter * self.scale_factor,
+                'bbox': bbox,
+                'orientation': prop.orientation,
+            }
+            
+            pore_data.append(pore_info)
         
-        # Find pore contours
-        contours, _ = cv2.findContours(pore_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        valid_pores = []
-        filtered_mask = np.zeros_like(pore_mask)
-        
-        for i, contour in enumerate(contours):
-            area = cv2.contourArea(contour)
-            
-            # Size filtering
-            if area < thresholds['min_pore_area'] or area > thresholds['max_pore_area']:
-                continue
-            
-            # Calculate pore properties
-            pore_props = self._calculate_pore_properties(contour, area, thresholds)
-            
-            # Shape filtering
-            if pore_props['circularity'] < self.pore_circularity_threshold:
-                continue
-            
-            # Position filtering (exclude pores too close to fiber edge)
-            pore_center = pore_props['centroid']
-            if inner_fiber_mask[int(pore_center[1]), int(pore_center[0])] == 0:
-                continue  # Pore is too close to edge
-            
-            # Valid pore - add to results
-            pore_props['pore_id'] = i
-            pore_props['contour'] = contour
-            valid_pores.append(pore_props)
-            
-            # Add to filtered mask
-            cv2.fillPoly(filtered_mask, [contour], 255)
-        
-        return filtered_mask, valid_pores
+        return pore_data
     
-    def _calculate_pore_properties(self, contour: np.ndarray, area: float, thresholds: Dict) -> Dict:
+    def _filter_pores(self, pore_properties: List[Dict]) -> List[Dict]:
         """
-        Calculate comprehensive properties for a pore.
-        
-        Args:
-            contour: Pore contour
-            area: Pore area in pixels
-            thresholds: Adaptive thresholds dictionary
-            
-        Returns:
-            Dictionary of pore properties
-        """
-        # Basic geometric properties
-        perimeter = cv2.arcLength(contour, True)
-        x, y, w, h = cv2.boundingRect(contour)
-        (cx, cy), radius = cv2.minEnclosingCircle(contour)
-        
-        # Shape descriptors
-        circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
-        aspect_ratio = max(w, h) / min(w, h) if min(w, h) > 0 else 0
-        extent = area / (w * h) if w * h > 0 else 0
-        solidity = area / cv2.contourArea(cv2.convexHull(contour)) if len(contour) >= 3 else 1.0
-        
-        # Size metrics
-        equivalent_diameter = np.sqrt(4 * area / np.pi)  # Diameter of circle with same area
-        
-        # Convert to real units if scale factor available
-        scale_factor = thresholds.get('scale_factor', 1.0)
-        area_um2 = area * (scale_factor ** 2)
-        equivalent_diameter_um = equivalent_diameter * scale_factor
-        
-        return {
-            'area_pixels': area,
-            'area_um2': area_um2,
-            'perimeter_pixels': perimeter,
-            'perimeter_um': perimeter * scale_factor,
-            'centroid': (cx, cy),
-            'radius_pixels': radius,
-            'radius_um': radius * scale_factor,
-            'equivalent_diameter_pixels': equivalent_diameter,
-            'equivalent_diameter_um': equivalent_diameter_um,
-            'bounding_rect': (x, y, w, h),
-            'circularity': circularity,
-            'aspect_ratio': aspect_ratio,
-            'extent': extent,
-            'solidity': solidity
-        }
-    
-    def calculate_porosity_metrics(self, pore_properties: List[Dict], fiber_area: float, 
-                                  thresholds: Dict) -> Dict:
-        """
-        Calculate comprehensive porosity metrics.
+        Filter pores based on size and shape criteria to remove artifacts.
         
         Args:
             pore_properties: List of pore property dictionaries
-            fiber_area: Total fiber area in pixels
-            thresholds: Adaptive thresholds dictionary
             
         Returns:
-            Dictionary of porosity metrics
+            Filtered list of valid pores
         """
-        if not pore_properties:
-            return {
-                'total_porosity': 0.0,
-                'pore_count': 0,
-                'pore_density': 0.0,
-                'mean_pore_size': 0.0,
-                'pore_size_std': 0.0,
-                'size_distribution': {},
-                'error': 'No valid pores detected'
-            }
+        valid_pores = []
         
-        # Extract areas for analysis
-        pore_areas_pixels = [pore['area_pixels'] for pore in pore_properties]
-        pore_areas_um2 = [pore['area_um2'] for pore in pore_properties]
-        pore_diameters_um = [pore['equivalent_diameter_um'] for pore in pore_properties]
-        
-        # Basic metrics
-        total_pore_area_pixels = sum(pore_areas_pixels)
-        total_pore_area_um2 = sum(pore_areas_um2)
-        
-        # Porosity calculations
-        total_porosity = total_pore_area_pixels / fiber_area if fiber_area > 0 else 0
-        pore_count = len(pore_properties)
-        
-        # Scale-aware calculations
-        scale_factor = thresholds.get('scale_factor', 1.0)
-        fiber_area_um2 = fiber_area * (scale_factor ** 2)
-        pore_density = pore_count / fiber_area_um2 if fiber_area_um2 > 0 else 0  # pores per μm²
-        
-        # Size statistics
-        mean_pore_size_um2 = np.mean(pore_areas_um2)
-        median_pore_size_um2 = np.median(pore_areas_um2)
-        pore_size_std_um2 = np.std(pore_areas_um2)
-        
-        mean_pore_diameter_um = np.mean(pore_diameters_um)
-        median_pore_diameter_um = np.median(pore_diameters_um)
-        pore_diameter_std_um = np.std(pore_diameters_um)
-        
-        # Size distribution analysis
-        size_distribution = self._analyze_size_distribution(pore_diameters_um)
-        
-        # Shape analysis
-        circularities = [pore['circularity'] for pore in pore_properties]
-        mean_circularity = np.mean(circularities)
-        
-        aspect_ratios = [pore['aspect_ratio'] for pore in pore_properties]
-        mean_aspect_ratio = np.mean(aspect_ratios)
-        
-        return {
-            # Basic porosity metrics
-            'total_porosity': total_porosity,
-            'total_porosity_percent': total_porosity * 100,
-            'pore_count': pore_count,
-            'pore_density_per_um2': pore_density,
-            
-            # Area statistics
-            'total_pore_area_pixels': total_pore_area_pixels,
-            'total_pore_area_um2': total_pore_area_um2,
-            'mean_pore_area_um2': mean_pore_size_um2,
-            'median_pore_area_um2': median_pore_size_um2,
-            'pore_area_std_um2': pore_size_std_um2,
-            
-            # Diameter statistics
-            'mean_pore_diameter_um': mean_pore_diameter_um,
-            'median_pore_diameter_um': median_pore_diameter_um,
-            'pore_diameter_std_um': pore_diameter_std_um,
-            'min_pore_diameter_um': min(pore_diameters_um),
-            'max_pore_diameter_um': max(pore_diameters_um),
-            
-            # Shape statistics
-            'mean_circularity': mean_circularity,
-            'mean_aspect_ratio': mean_aspect_ratio,
-            
-            # Distribution analysis
-            'size_distribution': size_distribution,
-            
-            # Metadata
-            'fiber_area_pixels': fiber_area,
-            'fiber_area_um2': fiber_area_um2,
-            'scale_factor': scale_factor,
-            'analysis_parameters': thresholds
-        }
-    
-    def _analyze_size_distribution(self, pore_diameters_um: List[float]) -> Dict:
-        """
-        Analyze pore size distribution with binning and statistics.
-        
-        Args:
-            pore_diameters_um: List of pore diameters in micrometers
-            
-        Returns:
-            Dictionary with distribution analysis
-        """
-        if not pore_diameters_um:
-            return {}
-        
-        diameters = np.array(pore_diameters_um)
-        
-        # Define size categories (adjust based on typical pore sizes)
-        size_bins = [0, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, np.inf]
-        size_labels = ['< 0.1 μm', '0.1-0.2 μm', '0.2-0.5 μm', '0.5-1.0 μm', 
-                      '1.0-2.0 μm', '2.0-5.0 μm', '> 5.0 μm']
-        
-        # Bin the data
-        bin_counts, _ = np.histogram(diameters, bins=size_bins)
-        
-        # Calculate percentages
-        total_pores = len(diameters)
-        percentages = (bin_counts / total_pores * 100) if total_pores > 0 else np.zeros_like(bin_counts)
-        
-        # Create distribution dictionary
-        distribution = {}
-        for i, label in enumerate(size_labels):
-            distribution[label] = {
-                'count': int(bin_counts[i]),
-                'percentage': float(percentages[i])
-            }
-        
-        # Additional statistics
-        distribution['statistics'] = {
-            'total_pores': total_pores,
-            'mean_diameter': float(np.mean(diameters)),
-            'median_diameter': float(np.median(diameters)),
-            'std_diameter': float(np.std(diameters)),
-            'min_diameter': float(np.min(diameters)),
-            'max_diameter': float(np.max(diameters)),
-            'q25_diameter': float(np.percentile(diameters, 25)),
-            'q75_diameter': float(np.percentile(diameters, 75))
-        }
-        
-        return distribution
-    
-    def analyze_fiber_porosity(self, image: np.ndarray, fiber_contour: np.ndarray,
-                              lumen_contour: Optional[np.ndarray] = None,
-                              scale_factor: float = 1.0) -> Dict:
-        """
-        Complete porosity analysis for a single fiber.
-        
-        Args:
-            image: Original grayscale image
-            fiber_contour: Contour of the fiber
-            lumen_contour: Optional contour of the lumen (for hollow fibers)
-            scale_factor: Micrometers per pixel conversion factor
-            
-        Returns:
-            Comprehensive porosity analysis results
-        """
-        # Calculate fiber area
-        fiber_area = cv2.contourArea(fiber_contour)
-        
-        # Calculate adaptive thresholds
-        thresholds = self.calculate_adaptive_pore_thresholds(fiber_area, scale_factor)
-        
-        # Create fiber mask
-        fiber_mask = np.zeros(image.shape[:2], dtype=np.uint8)
-        cv2.fillPoly(fiber_mask, [fiber_contour], 255)
-        
-        # Create lumen mask if provided
-        lumen_mask = None
-        if lumen_contour is not None:
-            lumen_mask = np.zeros(image.shape[:2], dtype=np.uint8)
-            cv2.fillPoly(lumen_mask, [lumen_contour], 255)
-        
-        # Segment pores
-        pore_mask = self.segment_pores(image, fiber_mask, 
-                                      exclude_lumen=(lumen_mask is not None), 
-                                      lumen_mask=lumen_mask)
-        
-        # Filter pores by criteria
-        filtered_pore_mask, pore_properties = self.filter_pores_by_criteria(
-            pore_mask, fiber_contour, thresholds
-        )
-        
-        # Calculate porosity metrics
-        porosity_metrics = self.calculate_porosity_metrics(
-            pore_properties, fiber_area, thresholds
-        )
-        
-        # Compile complete analysis
-        analysis_results = {
-            'porosity_metrics': porosity_metrics,
-            'pore_properties': pore_properties,
-            'masks': {
-                'fiber_mask': fiber_mask,
-                'lumen_mask': lumen_mask,
-                'pore_mask': pore_mask,
-                'filtered_pore_mask': filtered_pore_mask
-            },
-            'thresholds': thresholds,
-            'scale_factor': scale_factor,
-            'analysis_complete': True
-        }
-        
-        return analysis_results
-
-def visualize_porosity_analysis(image: np.ndarray, analysis_results: Dict, 
-                               figsize: Tuple[int, int] = (20, 12)):
-    """
-    Comprehensive visualization of porosity analysis results.
-    
-    Args:
-        image: Original image
-        analysis_results: Results from analyze_fiber_porosity
-        figsize: Figure size for visualization
-    """
-    fig, axes = plt.subplots(3, 4, figsize=figsize)
-    
-    masks = analysis_results['masks']
-    porosity_metrics = analysis_results['porosity_metrics']
-    pore_properties = analysis_results['pore_properties']
-    
-    # Row 1: Original image and masks
-    axes[0, 0].imshow(image, cmap='gray')
-    axes[0, 0].set_title('Original Image')
-    axes[0, 0].axis('off')
-    
-    axes[0, 1].imshow(masks['fiber_mask'], cmap='gray')
-    axes[0, 1].set_title('Fiber Mask')
-    axes[0, 1].axis('off')
-    
-    axes[0, 2].imshow(masks['pore_mask'], cmap='gray')
-    axes[0, 2].set_title('Detected Pores (Raw)')
-    axes[0, 2].axis('off')
-    
-    axes[0, 3].imshow(masks['filtered_pore_mask'], cmap='gray')
-    axes[0, 3].set_title('Filtered Pores')
-    axes[0, 3].axis('off')
-    
-    # Row 2: Analysis overlays
-    # Pore overlay on original image
-    overlay = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-    for pore in pore_properties:
-        contour = pore['contour']
-        cv2.drawContours(overlay, [contour], -1, (255, 0, 0), 2)  # Red pores
-        # Mark centroids
-        cx, cy = pore['centroid']
-        cv2.circle(overlay, (int(cx), int(cy)), 3, (0, 255, 255), -1)  # Yellow centers
-    
-    axes[1, 0].imshow(overlay)
-    axes[1, 0].set_title(f'Pore Detection Overlay\\n({len(pore_properties)} pores)')
-    axes[1, 0].axis('off')
-    
-    # Pore size visualization (color-coded by size)
-    if pore_properties:
-        size_overlay = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-        max_area = max(pore['area_um2'] for pore in pore_properties)
-        min_area = min(pore['area_um2'] for pore in pore_properties)
+        min_area = self.config['pore_detection']['min_pore_area'] * (self.scale_factor ** 2)
+        max_area = self.config['pore_detection']['max_pore_area'] * (self.scale_factor ** 2)
         
         for pore in pore_properties:
-            contour = pore['contour']
-            # Color based on size (blue = small, red = large)
-            if max_area > min_area:
-                size_ratio = (pore['area_um2'] - min_area) / (max_area - min_area)
-            else:
-                size_ratio = 0.5
-            color = (int(255 * (1 - size_ratio)), 0, int(255 * size_ratio))
-            cv2.drawContours(size_overlay, [contour], -1, color, -1)
+            # Size filtering
+            if not (min_area <= pore['area_um2'] <= max_area):
+                continue
+            
+            # Shape filtering - remove very elongated or irregular shapes
+            if pore['aspect_ratio'] > 5:  # Very elongated
+                continue
+            
+            if pore['circularity'] < 0.1:  # Very irregular
+                continue
+            
+            if pore['solidity'] < 0.5:  # Very non-convex
+                continue
+            
+            valid_pores.append(pore)
         
-        axes[1, 1].imshow(size_overlay)
-        axes[1, 1].set_title('Pore Size Distribution\\n(Blue=Small, Red=Large)')
-        axes[1, 1].axis('off')
-    else:
-        axes[1, 1].text(0.5, 0.5, 'No pores detected', ha='center', va='center',
-                       transform=axes[1, 1].transAxes, fontsize=16)
-        axes[1, 1].set_title('No Pores Detected')
-        axes[1, 1].axis('off')
+        return valid_pores
     
-    # Porosity metrics summary
-    metrics_text = f"""POROSITY ANALYSIS RESULTS:
-
-Total Porosity: {porosity_metrics['total_porosity_percent']:.2f}%
-Pore Count: {porosity_metrics['pore_count']}
-Pore Density: {porosity_metrics['pore_density_per_um2']:.3f} pores/μm²
-
-SIZE STATISTICS:
-Mean Diameter: {porosity_metrics['mean_pore_diameter_um']:.3f} μm
-Median Diameter: {porosity_metrics['median_pore_diameter_um']:.3f} μm
-Size Range: {porosity_metrics['min_pore_diameter_um']:.3f} - {porosity_metrics['max_pore_diameter_um']:.3f} μm
-
-SHAPE STATISTICS:
-Mean Circularity: {porosity_metrics['mean_circularity']:.3f}
-Mean Aspect Ratio: {porosity_metrics['mean_aspect_ratio']:.3f}"""
-
-    axes[1, 2].text(0.05, 0.95, metrics_text, transform=axes[1, 2].transAxes,
-                   fontsize=10, verticalalignment='top', fontfamily='monospace')
-    axes[1, 2].set_title('Porosity Metrics')
-    axes[1, 2].axis('off')
+    def _calculate_porosity_metrics(self, pore_data: List[Dict], fiber_mask: np.ndarray) -> Dict:
+        """Calculate overall porosity metrics."""
+        if not pore_data:
+            return {
+                'total_porosity_percent': 0.0,
+                'pore_count': 0,
+                'total_pore_area_um2': 0.0,
+                'fiber_area_um2': 0.0,
+                'average_pore_size_um2': 0.0,
+                'pore_density_per_mm2': 0.0
+            }
+        
+        # Calculate total areas
+        total_pore_area_pixels = sum(pore['area_pixels'] for pore in pore_data)
+        total_pore_area_um2 = sum(pore['area_um2'] for pore in pore_data)
+        
+        fiber_area_pixels = np.sum(fiber_mask)
+        fiber_area_um2 = fiber_area_pixels * (self.scale_factor ** 2)
+        
+        # Calculate porosity percentage
+        porosity_percent = (total_pore_area_pixels / fiber_area_pixels) * 100 if fiber_area_pixels > 0 else 0
+        
+        # Calculate other metrics
+        pore_count = len(pore_data)
+        avg_pore_size = total_pore_area_um2 / pore_count if pore_count > 0 else 0
+        
+        # Pore density (pores per mm²)
+        fiber_area_mm2 = fiber_area_um2 / 1e6  # Convert µm² to mm²
+        pore_density = pore_count / fiber_area_mm2 if fiber_area_mm2 > 0 else 0
+        
+        return {
+            'total_porosity_percent': porosity_percent,
+            'pore_count': pore_count,
+            'total_pore_area_um2': total_pore_area_um2,
+            'fiber_area_um2': fiber_area_um2,
+            'average_pore_size_um2': avg_pore_size,
+            'pore_density_per_mm2': pore_density
+        }
     
-    # Size distribution pie chart
-    if 'size_distribution' in porosity_metrics and pore_properties:
-        dist = porosity_metrics['size_distribution']
-        labels = []
-        sizes = []
-        for label, data in dist.items():
-            if label != 'statistics' and data['count'] > 0:
-                labels.append(f"{label}\\n({data['count']})")
-                sizes.append(data['count'])
+    def _analyze_size_distribution(self, pore_data: List[Dict]) -> Dict:
+        """Analyze pore size distribution."""
+        if not pore_data:
+            return {'sizes_um2': [], 'diameters_um': [], 'statistics': {}}
         
-        if sizes:
-            axes[1, 3].pie(sizes, labels=labels, autopct='%1.1f%%', startangle=90)
-            axes[1, 3].set_title('Pore Size Distribution')
-        else:
-            axes[1, 3].text(0.5, 0.5, 'No size distribution', ha='center', va='center',
-                           transform=axes[1, 3].transAxes)
-            axes[1, 3].set_title('Size Distribution')
+        sizes = [pore['area_um2'] for pore in pore_data]
+        diameters = [pore['equivalent_diameter_um'] for pore in pore_data]
+        
+        # Calculate statistics
+        percentiles = self.config['analysis']['percentiles']
+        size_stats = {
+            'mean_size_um2': np.mean(sizes),
+            'median_size_um2': np.median(sizes),
+            'std_size_um2': np.std(sizes),
+            'min_size_um2': np.min(sizes),
+            'max_size_um2': np.max(sizes),
+            'mean_diameter_um': np.mean(diameters),
+            'median_diameter_um': np.median(diameters),
+            'std_diameter_um': np.std(diameters),
+        }
+        
+        # Add percentiles
+        for p in percentiles:
+            size_stats[f'p{p}_size_um2'] = np.percentile(sizes, p)
+            size_stats[f'p{p}_diameter_um'] = np.percentile(diameters, p)
+        
+        return {
+            'sizes_um2': sizes,
+            'diameters_um': diameters,
+            'statistics': size_stats
+        }
     
-    # Row 3: Detailed analysis plots
-    if pore_properties:
-        # Pore area histogram
-        areas_um2 = [pore['area_um2'] for pore in pore_properties]
-        axes[2, 0].hist(areas_um2, bins=min(20, len(areas_um2)), alpha=0.7, edgecolor='black')
-        axes[2, 0].set_xlabel('Pore Area (μm²)')
-        axes[2, 0].set_ylabel('Frequency')
-        axes[2, 0].set_title('Pore Area Distribution')
+    def _analyze_spatial_distribution(self, pore_data: List[Dict], fiber_mask: np.ndarray) -> Dict:
+        """Analyze spatial distribution of pores."""
+        if len(pore_data) < 2:
+            return {'spatial_uniformity': 1.0, 'clustering_coefficient': 0.0}
         
-        # Pore diameter histogram
-        diameters_um = [pore['equivalent_diameter_um'] for pore in pore_properties]
-        axes[2, 1].hist(diameters_um, bins=min(20, len(diameters_um)), alpha=0.7, edgecolor='black')
-        axes[2, 1].set_xlabel('Equivalent Diameter (μm)')
-        axes[2, 1].set_ylabel('Frequency')
-        axes[2, 1].set_title('Pore Diameter Distribution')
+        # Extract centroid coordinates
+        centroids = np.array([[pore['centroid_x'], pore['centroid_y']] for pore in pore_data])
         
-        # Circularity vs Size scatter
-        circularities = [pore['circularity'] for pore in pore_properties]
-        axes[2, 2].scatter(diameters_um, circularities, alpha=0.6)
-        axes[2, 2].set_xlabel('Diameter (μm)')
-        axes[2, 2].set_ylabel('Circularity')
-        axes[2, 2].set_title('Pore Shape vs Size')
+        # Calculate nearest neighbor distances
+        distances = spatial.distance_matrix(centroids, centroids)
+        np.fill_diagonal(distances, np.inf)  # Ignore self-distances
+        nearest_distances = np.min(distances, axis=1)
         
-        # Cumulative size distribution
-        sorted_diameters = np.sort(diameters_um)
-        cumulative = np.arange(1, len(sorted_diameters) + 1) / len(sorted_diameters) * 100
-        axes[2, 3].plot(sorted_diameters, cumulative, 'b-', linewidth=2)
-        axes[2, 3].set_xlabel('Diameter (μm)')
-        axes[2, 3].set_ylabel('Cumulative Percentage')
-        axes[2, 3].set_title('Cumulative Size Distribution')
-        axes[2, 3].grid(True, alpha=0.3)
-    else:
-        for i in range(4):
-            axes[2, i].text(0.5, 0.5, 'No pores for analysis', ha='center', va='center',
-                           transform=axes[2, i].transAxes)
-            axes[2, i].set_title('No Data')
+        # Spatial uniformity metric (coefficient of variation of nearest neighbor distances)
+        spatial_uniformity = 1 / (1 + np.std(nearest_distances) / np.mean(nearest_distances))
+        
+        # Clustering analysis using DBSCAN
+        try:
+            # Use median nearest neighbor distance as eps
+            eps = np.median(nearest_distances) * 1.5
+            clustering = DBSCAN(eps=eps, min_samples=2).fit(centroids)
+            n_clusters = len(set(clustering.labels_)) - (1 if -1 in clustering.labels_ else 0)
+            clustering_coefficient = n_clusters / len(pore_data)
+        except:
+            clustering_coefficient = 0.0
+        
+        return {
+            'spatial_uniformity': spatial_uniformity,
+            'clustering_coefficient': clustering_coefficient,
+            'nearest_neighbor_distances_um': nearest_distances * self.scale_factor,
+            'mean_nn_distance_um': np.mean(nearest_distances) * self.scale_factor
+        }
     
-    plt.tight_layout()
-    plt.show()
+    def get_pore_dataframe(self) -> pd.DataFrame:
+        """Convert pore data to pandas DataFrame for easy analysis."""
+        if self.pore_data is None:
+            return pd.DataFrame()
+        
+        return pd.DataFrame(self.pore_data)
+    
+    def export_results(self, output_path: str):
+        """Export analysis results to Excel file."""
+        if self.results is None:
+            print("No results to export. Run analyze_porosity() first.")
+            return
+        
+        with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+            # Summary metrics
+            summary_df = pd.DataFrame([self.results['porosity_metrics']])
+            summary_df.to_excel(writer, sheet_name='Summary', index=False)
+            
+            # Individual pore data
+            if self.pore_data:
+                pore_df = self.get_pore_dataframe()
+                pore_df.to_excel(writer, sheet_name='Pore_Data', index=False)
+            
+            # Size distribution statistics
+            if self.results['size_distribution']['statistics']:
+                size_stats_df = pd.DataFrame([self.results['size_distribution']['statistics']])
+                size_stats_df.to_excel(writer, sheet_name='Size_Statistics', index=False)
+            
+            # Spatial analysis
+            spatial_df = pd.DataFrame([self.results['spatial_analysis']])
+            spatial_df.to_excel(writer, sheet_name='Spatial_Analysis', index=False)
+        
+        print(f"Results exported to {output_path}")
 
-# Convenience function for quick porosity analysis
-def analyze_porosity(image: np.ndarray, fiber_contour: np.ndarray, 
-                    lumen_contour: Optional[np.ndarray] = None,
-                    scale_factor: float = 1.0, **kwargs) -> Dict:
+
+def analyze_fiber_porosity(image: np.ndarray, 
+                          fiber_mask: np.ndarray,
+                          scale_factor: float = 1.0,
+                          config: Optional[Dict] = None) -> Dict[str, Any]:
     """
-    Convenience function for quick porosity analysis.
+    Convenience function for porosity analysis.
     
     Args:
-        image: Input grayscale image
-        fiber_contour: Contour of the fiber
-        lumen_contour: Optional contour of the lumen
+        image: Input SEM image (grayscale)
+        fiber_mask: Binary mask of fiber regions
         scale_factor: Micrometers per pixel conversion factor
-        **kwargs: Additional parameters for PorosityAnalyzer
+        config: Optional configuration dictionary
         
     Returns:
-        Porosity analysis results
+        Dictionary containing porosity analysis results
     """
-    analyzer = PorosityAnalyzer(**kwargs)
-    return analyzer.analyze_fiber_porosity(image, fiber_contour, lumen_contour, scale_factor)
+    analyzer = PorosityAnalyzer(config)
+    return analyzer.analyze_porosity(image, fiber_mask, scale_factor)
+
+
+def quick_porosity_check(image: np.ndarray, 
+                        fiber_mask: np.ndarray,
+                        scale_factor: float = 1.0) -> float:
+    """
+    Quick porosity percentage calculation.
+    
+    Args:
+        image: Input SEM image
+        fiber_mask: Binary mask of fiber regions
+        scale_factor: Micrometers per pixel conversion factor
+        
+    Returns:
+        Porosity percentage
+    """
+    config = {
+        'segmentation': {'method': 'otsu'},
+        'pore_detection': {'min_pore_area': 3}
+    }
+    
+    results = analyze_fiber_porosity(image, fiber_mask, scale_factor, config)
+    return results['porosity_metrics']['total_porosity_percent']
