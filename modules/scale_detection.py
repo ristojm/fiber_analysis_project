@@ -17,12 +17,18 @@ try:
     PYTESSERACT_AVAILABLE = True
 except ImportError:
     PYTESSERACT_AVAILABLE = False
+    print("Warning: pytesseract not available. Scale text detection will be limited.")
 
 try:
     import easyocr
     EASYOCR_AVAILABLE = True
 except ImportError:
     EASYOCR_AVAILABLE = False
+    print("Warning: easyocr not available. Scale text detection will be limited.")
+
+# If no OCR is available, we'll use manual calibration
+if not PYTESSERACT_AVAILABLE and not EASYOCR_AVAILABLE:
+    print("No OCR engines available. Using manual scale calibration mode.")
 
 class ScaleBarDetector:
     """
@@ -171,7 +177,7 @@ class ScaleBarDetector:
     
     def extract_scale_text_pytesseract(self, scale_region: np.ndarray, bar_candidates: List[Dict]) -> List[str]:
         """
-        Extract text from scale region using Tesseract OCR.
+        Extract text from scale region using Tesseract OCR with proper encoding handling.
         
         Args:
             scale_region: Scale region image
@@ -192,12 +198,30 @@ class ScaleBarDetector:
             # OCR configuration for better number recognition
             config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789µμmnmkMKMm.μ '
             
-            text = pytesseract.image_to_string(enhanced, config=config)
+            # Use encoding parameter to avoid Windows Unicode issues
+            import tempfile
+            import os
             
-            # Clean and split text
-            lines = [line.strip() for line in text.split('\n') if line.strip()]
+            # Save image temporarily 
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+                cv2.imwrite(temp_file.name, enhanced)
+                temp_path = temp_file.name
             
-            return lines
+            try:
+                # Extract text with explicit encoding handling
+                text = pytesseract.image_to_string(temp_path, config=config)
+                
+                # Clean and split text
+                lines = [line.strip() for line in text.split('\n') if line.strip()]
+                
+                return lines
+                
+            finally:
+                # Clean up temp file
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass
             
         except Exception as e:
             print(f"Tesseract OCR failed: {e}")

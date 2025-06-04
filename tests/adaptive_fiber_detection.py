@@ -1,19 +1,16 @@
 """
-SEM Fiber Analysis System - Adaptive Fiber Type Detection Module
-UPDATED: Dynamic thresholds that adapt to image resolution and content
+Adaptive Fiber Detection with Dynamic Thresholds
+Automatically adjusts parameters based on image resolution and content
 """
 
 import cv2
 import numpy as np
-from skimage import filters, morphology, measure, feature
-from scipy import ndimage, spatial
-from typing import Tuple, Dict, List, Optional
+from typing import Tuple, Dict, List
 import matplotlib.pyplot as plt
 
-class FiberTypeDetector:
+class AdaptiveFiberTypeDetector:
     """
-    Adaptive fiber type detector that automatically adjusts to image characteristics.
-    Uses resolution-aware thresholds for robust performance across different imaging conditions.
+    Adaptive fiber type detector that adjusts thresholds based on image characteristics
     """
     
     def __init__(self, 
@@ -23,14 +20,7 @@ class FiberTypeDetector:
                  circularity_threshold: float = 0.2,   # Relaxed circularity
                  confidence_threshold: float = 0.6):   # Lower confidence threshold
         """
-        Initialize adaptive detector with ratio-based parameters.
-        
-        Args:
-            min_fiber_ratio: Minimum fiber area as fraction of total image pixels
-            max_fiber_ratio: Maximum fiber area as fraction of total image pixels
-            lumen_area_threshold: Minimum lumen area ratio for hollow fiber classification
-            circularity_threshold: Minimum circularity for fiber validation
-            confidence_threshold: Minimum confidence for classification
+        Initialize adaptive detector with ratio-based parameters
         """
         self.min_fiber_ratio = min_fiber_ratio
         self.max_fiber_ratio = max_fiber_ratio
@@ -40,13 +30,7 @@ class FiberTypeDetector:
         
     def calculate_adaptive_thresholds(self, image: np.ndarray) -> Dict:
         """
-        Calculate adaptive thresholds based on image characteristics.
-        
-        Args:
-            image: Input image
-            
-        Returns:
-            Dictionary of adaptive thresholds
+        Calculate adaptive thresholds based on image characteristics
         """
         height, width = image.shape[:2]
         total_pixels = height * width
@@ -60,8 +44,6 @@ class FiberTypeDetector:
         
         # Adaptive morphological kernel size based on image resolution
         kernel_size = max(3, min(15, int(np.sqrt(total_pixels) / 200)))
-        if kernel_size % 2 == 0:
-            kernel_size += 1  # Ensure odd number
         
         # Adaptive minimum lumen area
         min_lumen_area = max(50, int(min_fiber_area * 0.02))  # At least 2% of min fiber
@@ -78,15 +60,8 @@ class FiberTypeDetector:
         return thresholds
     
     def preprocess_for_detection(self, image: np.ndarray) -> np.ndarray:
-        """
-        Adaptive preprocessing based on image characteristics.
+        """Adaptive preprocessing based on image characteristics"""
         
-        Args:
-            image: Input grayscale image
-            
-        Returns:
-            Preprocessed image optimized for segmentation
-        """
         # Adaptive blur based on image size
         blur_size = max(3, min(9, int(np.sqrt(image.shape[0] * image.shape[1]) / 300)))
         if blur_size % 2 == 0:
@@ -103,19 +78,10 @@ class FiberTypeDetector:
         
         return enhanced
     
-    def segment_fibers(self, image: np.ndarray) -> Tuple[np.ndarray, List[Dict]]:
+    def segment_fibers_adaptive(self, image: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
         """
-        Adaptive fiber segmentation using calculated thresholds.
-        
-        Args:
-            image: Preprocessed grayscale image
-            
-        Returns:
-            Tuple of (binary_mask, fiber_properties_list)
+        Adaptive fiber segmentation using calculated thresholds
         """
-        # Calculate adaptive thresholds
-        thresholds = self.calculate_adaptive_thresholds(image)
-        
         # Multi-scale Otsu thresholding
         _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         
@@ -143,37 +109,19 @@ class FiberTypeDetector:
             props = self._calculate_contour_properties(contour, area)
             
             # Adaptive shape validation
-            if self._is_valid_fiber_shape(props, thresholds):
+            if self._is_valid_fiber_shape_adaptive(props, thresholds):
                 props['contour_id'] = i
                 props['contour'] = contour
-                props['thresholds'] = thresholds  # Store for later use
                 fiber_properties.append(props)
                 cv2.fillPoly(fiber_mask, [contour], 255)
         
         return fiber_mask, fiber_properties
     
     def _calculate_contour_properties(self, contour: np.ndarray, area: float) -> Dict:
-        """
-        Calculate geometric properties of a contour.
-        
-        Args:
-            contour: OpenCV contour
-            area: Contour area
-            
-        Returns:
-            Dictionary of geometric properties
-        """
+        """Calculate geometric properties of a contour"""
         perimeter = cv2.arcLength(contour, True)
         x, y, w, h = cv2.boundingRect(contour)
         (cx, cy), radius = cv2.minEnclosingCircle(contour)
-        
-        # Fit ellipse (if enough points)
-        if len(contour) >= 5:
-            ellipse = cv2.fitEllipse(contour)
-            ellipse_area = np.pi * (ellipse[1][0]/2) * (ellipse[1][1]/2)
-        else:
-            ellipse = None
-            ellipse_area = 0
         
         # Calculate shape descriptors
         circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
@@ -187,29 +135,20 @@ class FiberTypeDetector:
             'centroid': (cx, cy),
             'radius': radius,
             'bounding_rect': (x, y, w, h),
-            'ellipse': ellipse,
-            'ellipse_area': ellipse_area,
             'circularity': circularity,
             'aspect_ratio': aspect_ratio,
             'extent': extent,
             'solidity': solidity
         }
     
-    def _is_valid_fiber_shape(self, props: Dict, thresholds: Dict) -> bool:
+    def _is_valid_fiber_shape_adaptive(self, props: Dict, thresholds: Dict) -> bool:
         """
-        Adaptive shape validation based on image characteristics.
-        
-        Args:
-            props: Contour properties dictionary
-            thresholds: Adaptive thresholds dictionary
-            
-        Returns:
-            True if valid fiber shape
+        Adaptive shape validation based on image characteristics
         """
         # Adaptive circularity threshold based on fiber size
         min_circularity = self.circularity_threshold
         
-        # Smaller fibers can be less circular (more likely to be artifacts)
+        # Smaller fibers can be less circular (artifacts)
         area_ratio = props['area'] / thresholds['image_total_pixels']
         if area_ratio < 0.001:  # Very small fibers
             min_circularity = max(0.3, self.circularity_threshold * 1.5)
@@ -228,20 +167,10 @@ class FiberTypeDetector:
         
         return True
     
-    def detect_lumen(self, image: np.ndarray, fiber_contour: np.ndarray) -> Tuple[bool, Dict]:
+    def detect_lumen_adaptive(self, image: np.ndarray, fiber_contour: np.ndarray, thresholds: Dict) -> Tuple[bool, Dict]:
         """
-        Adaptive lumen detection with resolution-aware parameters.
-        
-        Args:
-            image: Original grayscale image
-            fiber_contour: Contour of the fiber
-            
-        Returns:
-            Tuple of (has_lumen, lumen_properties)
+        Adaptive lumen detection with resolution-aware parameters
         """
-        # Get adaptive thresholds
-        thresholds = self.calculate_adaptive_thresholds(image)
-        
         # Create mask for fiber region
         mask = np.zeros(image.shape[:2], dtype=np.uint8)
         cv2.fillPoly(mask, [fiber_contour], 255)
@@ -290,21 +219,13 @@ class FiberTypeDetector:
         lumen_props['contour'] = largest_lumen
         
         # Adaptive validation
-        is_lumen = self._validate_lumen_enhanced(lumen_props, fiber_contour, thresholds)
+        is_lumen = self._validate_lumen_adaptive(lumen_props, fiber_contour, thresholds)
         
         return is_lumen, lumen_props
     
-    def _validate_lumen_enhanced(self, lumen_props: Dict, fiber_contour: np.ndarray, thresholds: Dict) -> bool:
+    def _validate_lumen_adaptive(self, lumen_props: Dict, fiber_contour: np.ndarray, thresholds: Dict) -> bool:
         """
-        Enhanced adaptive lumen validation.
-        
-        Args:
-            lumen_props: Properties of detected lumen
-            fiber_contour: Contour of parent fiber
-            thresholds: Adaptive thresholds dictionary
-            
-        Returns:
-            True if valid lumen
+        Adaptive lumen validation based on fiber and image characteristics
         """
         # Area ratio check (adaptive based on fiber size)
         min_area_ratio = self.lumen_area_threshold
@@ -318,7 +239,7 @@ class FiberTypeDetector:
         if not (min_area_ratio <= lumen_props['area_ratio'] <= max_area_ratio):
             return False
         
-        # Adaptive circularity check (very lenient for irregular lumens)
+        # Adaptive circularity check
         min_circularity = 0.05  # Very lenient for irregular lumens
         if lumen_props['circularity'] < min_circularity:
             return False
@@ -345,15 +266,9 @@ class FiberTypeDetector:
         
         return True
     
-    def classify_fiber_type(self, image: np.ndarray) -> Tuple[str, float, Dict]:
+    def classify_fiber_type_adaptive(self, image: np.ndarray) -> Tuple[str, float, Dict]:
         """
-        Main adaptive classification function.
-        
-        Args:
-            image: Input grayscale image
-            
-        Returns:
-            Tuple of (fiber_type, confidence, analysis_data)
+        Main adaptive classification function
         """
         # Calculate adaptive thresholds
         thresholds = self.calculate_adaptive_thresholds(image)
@@ -362,7 +277,7 @@ class FiberTypeDetector:
         preprocessed = self.preprocess_for_detection(image)
         
         # Segment fibers with adaptive thresholds
-        fiber_mask, fiber_properties = self.segment_fibers(preprocessed)
+        fiber_mask, fiber_properties = self.segment_fibers_adaptive(preprocessed, thresholds)
         
         if not fiber_properties:
             return "unknown", 0.0, {
@@ -376,10 +291,10 @@ class FiberTypeDetector:
         
         for fiber_props in fiber_properties:
             contour = fiber_props['contour']
-            has_lumen, lumen_props = self.detect_lumen(image, contour)
+            has_lumen, lumen_props = self.detect_lumen_adaptive(image, contour, thresholds)
             
             # Calculate confidence
-            confidence = self._calculate_type_confidence(fiber_props, has_lumen, lumen_props, thresholds)
+            confidence = self._calculate_confidence_adaptive(fiber_props, has_lumen, lumen_props, thresholds)
             
             analysis_results.append({
                 'fiber_properties': fiber_props,
@@ -412,18 +327,9 @@ class FiberTypeDetector:
         
         return final_type, final_confidence, analysis_data
     
-    def _calculate_type_confidence(self, fiber_props: Dict, has_lumen: bool, lumen_props: Dict, thresholds: Dict) -> float:
+    def _calculate_confidence_adaptive(self, fiber_props: Dict, has_lumen: bool, lumen_props: Dict, thresholds: Dict) -> float:
         """
-        Adaptive confidence calculation based on multiple factors.
-        
-        Args:
-            fiber_props: Fiber geometric properties
-            has_lumen: Whether lumen was detected
-            lumen_props: Lumen properties (if detected)
-            thresholds: Adaptive thresholds dictionary
-            
-        Returns:
-            Confidence score (0-1)
+        Adaptive confidence calculation based on multiple factors
         """
         base_confidence = 0.5
         
@@ -447,94 +353,74 @@ class FiberTypeDetector:
         
         return min(1.0, base_confidence)
 
-# Convenience function
-def detect_fiber_type(image: np.ndarray, **kwargs) -> Tuple[str, float]:
-    """
-    Convenience function for fiber type detection with adaptive algorithm.
+def test_adaptive_detection():
+    """Test the adaptive detection on both images"""
     
-    Args:
-        image: Input grayscale image
-        **kwargs: Additional parameters for FiberTypeDetector
-        
-    Returns:
-        Tuple of (fiber_type, confidence)
-    """
-    detector = FiberTypeDetector(**kwargs)
-    fiber_type, confidence, _ = detector.classify_fiber_type(image)
-    return fiber_type, confidence
-
-def visualize_fiber_type_analysis(image: np.ndarray, analysis_data: Dict, figsize: Tuple[int, int] = (15, 10)):
-    """
-    Visualize the fiber type detection results.
+    print("="*60)
+    print("TESTING ADAPTIVE FIBER DETECTION")
+    print("="*60)
     
-    Args:
-        image: Original image
-        analysis_data: Analysis results from classify_fiber_type
-        figsize: Figure size
-    """
-    fig, axes = plt.subplots(2, 3, figsize=figsize)
-    axes = axes.flatten()
+    # Setup paths
+    from pathlib import Path
+    import sys
     
-    # Original image
-    axes[0].imshow(image, cmap='gray')
-    axes[0].set_title('Original Image')
-    axes[0].axis('off')
-    
-    # Preprocessed image
-    axes[1].imshow(analysis_data['preprocessed_image'], cmap='gray')
-    axes[1].set_title('Preprocessed')
-    axes[1].axis('off')
-    
-    # Fiber mask
-    axes[2].imshow(analysis_data['fiber_mask'], cmap='gray')
-    axes[2].set_title('Detected Fibers')
-    axes[2].axis('off')
-    
-    # Overlay with fiber boundaries and lumen detection
-    overlay = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-    
-    for result in analysis_data['individual_results']:
-        contour = result['fiber_properties']['contour']
-        color = (0, 255, 0) if result['has_lumen'] else (255, 0, 0)  # Green for hollow, red for solid
-        cv2.drawContours(overlay, [contour], -1, color, 3)
-        
-        # Draw lumen if detected
-        if result['has_lumen'] and 'contour' in result['lumen_properties']:
-            lumen_contour = result['lumen_properties']['contour']
-            cv2.drawContours(overlay, [lumen_contour], -1, (0, 255, 255), 2)
-    
-    axes[3].imshow(overlay)
-    axes[3].set_title('Classification Results\n(Green=Hollow, Red=Solid, Cyan=Lumen)')
-    axes[3].axis('off')
-    
-    # Classification summary with adaptive info
-    thresholds = analysis_data.get('thresholds', {})
-    method = analysis_data.get('classification_method', 'adaptive')
-    
-    summary_text = f"Method: {method}\n"
-    summary_text += f"Total Fibers: {analysis_data['total_fibers']}\n"
-    summary_text += f"Hollow: {analysis_data['hollow_fibers']}\n"
-    summary_text += f"Filaments: {analysis_data['filaments']}\n\n"
-    summary_text += f"Adaptive Thresholds:\n"
-    summary_text += f"Min area: {thresholds.get('min_fiber_area', 0):,}\n"
-    summary_text += f"Max area: {thresholds.get('max_fiber_area', 0):,}\n"
-    summary_text += f"Kernel: {thresholds.get('kernel_size', 0)}"
-    
-    axes[4].text(0.05, 0.95, summary_text, transform=axes[4].transAxes,
-                fontsize=10, verticalalignment='top', fontfamily='monospace')
-    axes[4].set_title('Summary')
-    axes[4].axis('off')
-    
-    # Individual confidence scores
-    confidences = [result['confidence'] for result in analysis_data['individual_results']]
-    if confidences:
-        axes[5].bar(range(len(confidences)), confidences)
-        axes[5].set_title('Individual Confidence Scores')
-        axes[5].set_xlabel('Fiber ID')
-        axes[5].set_ylabel('Confidence')
-        axes[5].set_ylim(0, 1)
+    current_dir = Path(__file__).parent
+    if current_dir.name == 'tests':
+        project_root = current_dir.parent
     else:
-        axes[5].axis('off')
+        project_root = current_dir
+        
+    modules_dir = project_root / "modules"
+    sys.path.insert(0, str(modules_dir))
     
-    plt.tight_layout()
-    plt.show()
+    from image_preprocessing import load_image
+    
+    # Test both images
+    test_images = [
+        ("hollow_fiber_sample.jpg", "hollow_fiber"),
+        ("solid_filament_sample.jpg", "filament")
+    ]
+    
+    detector = AdaptiveFiberTypeDetector()
+    
+    for img_name, expected in test_images:
+        print(f"\n📷 Testing: {img_name}")
+        print("-" * 40)
+        
+        img = load_image(str(project_root / "sample_images" / img_name))
+        
+        # Run adaptive classification
+        fiber_type, confidence, analysis_data = detector.classify_fiber_type_adaptive(img)
+        
+        print(f"Image size: {img.shape}")
+        print(f"Adaptive thresholds:")
+        thresholds = analysis_data['thresholds']
+        print(f"  min_fiber_area: {thresholds['min_fiber_area']:,}")
+        print(f"  max_fiber_area: {thresholds['max_fiber_area']:,}")
+        print(f"  kernel_size: {thresholds['kernel_size']}")
+        
+        print(f"\nResults:")
+        print(f"  Type: {fiber_type}")
+        print(f"  Confidence: {confidence:.3f}")
+        print(f"  Total fibers: {analysis_data['total_fibers']}")
+        print(f"  Hollow: {analysis_data['hollow_fibers']}")
+        print(f"  Filaments: {analysis_data['filaments']}")
+        
+        # Check correctness
+        if fiber_type == expected:
+            print(f"  ✅ CORRECT!")
+        else:
+            print(f"  ❌ Expected: {expected}")
+        
+        # Show fiber details
+        if analysis_data['individual_results']:
+            print(f"\nFiber details:")
+            for i, result in enumerate(analysis_data['individual_results']):
+                props = result['fiber_properties']
+                area = props['area']
+                has_lumen = result['has_lumen']
+                conf = result['confidence']
+                print(f"  Fiber {i+1}: {area:,} pixels, lumen={has_lumen}, conf={conf:.3f}")
+
+if __name__ == "__main__":
+    test_adaptive_detection()

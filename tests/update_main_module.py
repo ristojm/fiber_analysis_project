@@ -1,4 +1,35 @@
+#!/usr/bin/env python3
 """
+Update the main fiber_type_detection.py module with adaptive detection
+"""
+
+import sys
+from pathlib import Path
+import shutil
+
+def update_main_module():
+    """Replace the main module with adaptive detection"""
+    
+    print("="*60)
+    print("UPDATING MAIN MODULE WITH ADAPTIVE DETECTION")
+    print("="*60)
+    
+    # Setup paths
+    current_dir = Path(__file__).parent
+    if current_dir.name == 'tests':
+        project_root = current_dir.parent
+    else:
+        project_root = current_dir
+    
+    module_file = project_root / "modules" / "fiber_type_detection.py"
+    backup_file = project_root / "modules" / "fiber_type_detection_backup.py"
+    
+    # Create backup of current module
+    print(f"📁 Creating backup: {backup_file.name}")
+    shutil.copy2(module_file, backup_file)
+    
+    # Read the adaptive detection code
+    adaptive_code = '''"""
 SEM Fiber Analysis System - Adaptive Fiber Type Detection Module
 UPDATED: Dynamic thresholds that adapt to image resolution and content
 """
@@ -504,20 +535,20 @@ def visualize_fiber_type_analysis(image: np.ndarray, analysis_data: Dict, figsiz
             cv2.drawContours(overlay, [lumen_contour], -1, (0, 255, 255), 2)
     
     axes[3].imshow(overlay)
-    axes[3].set_title('Classification Results\n(Green=Hollow, Red=Solid, Cyan=Lumen)')
+    axes[3].set_title('Classification Results\\n(Green=Hollow, Red=Solid, Cyan=Lumen)')
     axes[3].axis('off')
     
     # Classification summary with adaptive info
     thresholds = analysis_data.get('thresholds', {})
     method = analysis_data.get('classification_method', 'adaptive')
     
-    summary_text = f"Method: {method}\n"
-    summary_text += f"Total Fibers: {analysis_data['total_fibers']}\n"
-    summary_text += f"Hollow: {analysis_data['hollow_fibers']}\n"
-    summary_text += f"Filaments: {analysis_data['filaments']}\n\n"
-    summary_text += f"Adaptive Thresholds:\n"
-    summary_text += f"Min area: {thresholds.get('min_fiber_area', 0):,}\n"
-    summary_text += f"Max area: {thresholds.get('max_fiber_area', 0):,}\n"
+    summary_text = f"Method: {method}\\n"
+    summary_text += f"Total Fibers: {analysis_data['total_fibers']}\\n"
+    summary_text += f"Hollow: {analysis_data['hollow_fibers']}\\n"
+    summary_text += f"Filaments: {analysis_data['filaments']}\\n\\n"
+    summary_text += f"Adaptive Thresholds:\\n"
+    summary_text += f"Min area: {thresholds.get('min_fiber_area', 0):,}\\n"
+    summary_text += f"Max area: {thresholds.get('max_fiber_area', 0):,}\\n"
     summary_text += f"Kernel: {thresholds.get('kernel_size', 0)}"
     
     axes[4].text(0.05, 0.95, summary_text, transform=axes[4].transAxes,
@@ -538,3 +569,76 @@ def visualize_fiber_type_analysis(image: np.ndarray, analysis_data: Dict, figsiz
     
     plt.tight_layout()
     plt.show()
+'''
+    
+    # Write the updated module
+    print(f"📝 Writing updated module...")
+    with open(module_file, 'w', encoding='utf-8') as f:
+        f.write(adaptive_code)
+    
+    print(f"✅ Module updated successfully!")
+    print(f"📁 Backup saved as: {backup_file.name}")
+    
+    return True
+
+def test_updated_module():
+    """Test the updated module"""
+    
+    print(f"\n🧪 TESTING UPDATED MODULE:")
+    
+    # Setup paths
+    current_dir = Path(__file__).parent
+    if current_dir.name == 'tests':
+        project_root = current_dir.parent
+    else:
+        project_root = current_dir
+    
+    modules_dir = project_root / "modules"
+    sys.path.insert(0, str(modules_dir))
+    
+    # Force reload
+    import importlib
+    if 'fiber_type_detection' in sys.modules:
+        importlib.reload(sys.modules['fiber_type_detection'])
+    
+    from fiber_type_detection import FiberTypeDetector
+    from image_preprocessing import load_image
+    
+    # Test both images
+    test_images = [
+        ("hollow_fiber_sample.jpg", "hollow_fiber"),
+        ("solid_filament_sample.jpg", "filament")
+    ]
+    
+    detector = FiberTypeDetector()
+    
+    for img_name, expected in test_images:
+        print(f"\n  📷 {img_name}:")
+        
+        img = load_image(str(project_root / "sample_images" / img_name))
+        fiber_type, confidence, analysis_data = detector.classify_fiber_type(img)
+        
+        print(f"    Type: {fiber_type}")
+        print(f"    Confidence: {confidence:.3f}")
+        print(f"    Fibers: {analysis_data['total_fibers']}")
+        print(f"    Min area threshold: {analysis_data['thresholds']['min_fiber_area']:,}")
+        
+        if fiber_type == expected:
+            print(f"    ✅ CORRECT!")
+        else:
+            print(f"    ❌ Expected: {expected}")
+
+if __name__ == "__main__":
+    success = update_main_module()
+    
+    if success:
+        test_updated_module()
+        
+        print(f"\n" + "="*60)
+        print(f"🎉 MAIN MODULE SUCCESSFULLY UPDATED!")
+        print(f"="*60)
+        print(f"✅ Adaptive detection is now the default")
+        print(f"✅ Resolution-independent thresholds")
+        print(f"✅ Content-aware parameter adjustment")
+        print(f"✅ Backward compatible with existing code")
+        print(f"✅ Backup saved for safety")

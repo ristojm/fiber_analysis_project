@@ -13,7 +13,7 @@ import warnings
 
 def load_image(image_path: str) -> np.ndarray:
     """
-    Load SEM image from file path.
+    Load SEM image from file path with robust encoding handling.
     
     Args:
         image_path: Path to the image file
@@ -27,13 +27,27 @@ def load_image(image_path: str) -> np.ndarray:
         
         if img is None:
             # Fallback to matplotlib for other formats
-            from matplotlib.image import imread
-            img = imread(image_path)
-            if len(img.shape) == 3:
-                img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-            # Convert to uint8 if needed
-            if img.dtype != np.uint8:
-                img = (img * 255).astype(np.uint8)
+            try:
+                from matplotlib.image import imread
+                img = imread(image_path)
+                if len(img.shape) == 3:
+                    img = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+                # Convert to uint8 if needed
+                if img.dtype != np.uint8:
+                    if img.max() <= 1.0:
+                        img = (img * 255).astype(np.uint8)
+                    else:
+                        img = img.astype(np.uint8)
+            except Exception as e:
+                # Final fallback - try PIL
+                try:
+                    from PIL import Image
+                    pil_img = Image.open(image_path)
+                    if pil_img.mode != 'L':
+                        pil_img = pil_img.convert('L')
+                    img = np.array(pil_img)
+                except Exception as pil_e:
+                    raise ValueError(f"Could not load image from {image_path}. OpenCV error: Failed to load. PIL error: {pil_e}")
                 
         return img
     except Exception as e:
@@ -181,7 +195,7 @@ def preprocess_pipeline(image_path: str,
                        remove_scale_bar: bool = True,
                        normalize: bool = True) -> dict:
     """
-    Complete preprocessing pipeline for SEM images.
+    Complete preprocessing pipeline for SEM images with robust file handling.
     
     Args:
         image_path: Path to input image
@@ -193,49 +207,56 @@ def preprocess_pipeline(image_path: str,
     Returns:
         Dictionary containing processed images and metadata
     """
-    # Load original image
-    original = load_image(image_path)
-    
-    # Store processing steps
-    result = {
-        'original': original.copy(),
-        'processing_steps': []
-    }
-    
-    # Enhance contrast
-    enhanced = enhance_contrast(original, method=enhance_contrast_method)
-    result['contrast_enhanced'] = enhanced
-    result['processing_steps'].append(f"Contrast enhancement: {enhance_contrast_method}")
-    
-    # Denoise
-    denoised = denoise_image(enhanced, method=denoise_method)
-    result['denoised'] = denoised
-    result['processing_steps'].append(f"Denoising: {denoise_method}")
-    
-    # Normalize
-    if normalize:
-        normalized = normalize_image(denoised)
-        result['normalized'] = normalized
-        result['processing_steps'].append("Intensity normalization")
-        current_image = normalized
-    else:
-        current_image = denoised
-    
-    # Separate scale bar region
-    if remove_scale_bar:
-        main_region, scale_bar_region = remove_scale_bar_region(current_image)
-        result['main_region'] = main_region
-        result['scale_bar_region'] = scale_bar_region
-        result['processing_steps'].append("Scale bar separation")
-        result['processed'] = main_region  # Main analysis image
-    else:
-        result['processed'] = current_image
-    
-    # Add metadata
-    result['image_shape'] = original.shape
-    result['preprocessing_complete'] = True
-    
-    return result
+    try:
+        # Load original image with robust handling
+        print(f"Loading image: {image_path}")
+        original = load_image(image_path)
+        print(f"✓ Image loaded successfully: {original.shape}")
+        
+        # Store processing steps
+        result = {
+            'original': original.copy(),
+            'processing_steps': []
+        }
+        
+        # Enhance contrast
+        enhanced = enhance_contrast(original, method=enhance_contrast_method)
+        result['contrast_enhanced'] = enhanced
+        result['processing_steps'].append(f"Contrast enhancement: {enhance_contrast_method}")
+        
+        # Denoise
+        denoised = denoise_image(enhanced, method=denoise_method)
+        result['denoised'] = denoised
+        result['processing_steps'].append(f"Denoising: {denoise_method}")
+        
+        # Normalize
+        if normalize:
+            normalized = normalize_image(denoised)
+            result['normalized'] = normalized
+            result['processing_steps'].append("Intensity normalization")
+            current_image = normalized
+        else:
+            current_image = denoised
+        
+        # Separate scale bar region
+        if remove_scale_bar:
+            main_region, scale_bar_region = remove_scale_bar_region(current_image)
+            result['main_region'] = main_region
+            result['scale_bar_region'] = scale_bar_region
+            result['processing_steps'].append("Scale bar separation")
+            result['processed'] = main_region  # Main analysis image
+        else:
+            result['processed'] = current_image
+        
+        # Add metadata
+        result['image_shape'] = original.shape
+        result['preprocessing_complete'] = True
+        
+        return result
+        
+    except Exception as e:
+        print(f"❌ Error in preprocessing pipeline: {e}")
+        raise
 
 def load_and_preprocess(image_path: str, **kwargs) -> np.ndarray:
     """
