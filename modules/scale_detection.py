@@ -447,19 +447,72 @@ class ScaleBarDetector:
         plt.tight_layout()
         plt.show()
 
-def detect_scale_bar(image: np.ndarray, **kwargs) -> float:
+def detect_scale_bar(image_input, **kwargs) -> Dict:
     """
-    Convenience function to detect scale bar and return calibration factor.
+    Convenience function to detect scale bar and return full results.
     
     Args:
-        image: Input SEM image
+        image_input: Either np.ndarray (image) or str (path to image)
+        **kwargs: Additional parameters for ScaleBarDetector
+        
+    Returns:
+        Dictionary containing scale detection results
+    """
+    # Handle both image arrays and file paths
+    if isinstance(image_input, str):
+        # Load image from path
+        import cv2
+        image = cv2.imread(image_input, cv2.IMREAD_GRAYSCALE)
+        if image is None:
+            return {
+                'scale_detected': False,
+                'micrometers_per_pixel': 0.0,
+                'scale_factor': 0.0,  # For backward compatibility
+                'error': f'Could not load image from path: {image_input}'
+            }
+    elif isinstance(image_input, np.ndarray):
+        # Already an image array
+        image = image_input
+    else:
+        return {
+            'scale_detected': False,
+            'micrometers_per_pixel': 0.0,
+            'scale_factor': 0.0,
+            'error': f'Invalid input type: {type(image_input)}. Expected str or np.ndarray'
+        }
+    
+    # Run detection
+    detector = ScaleBarDetector(**kwargs)
+    result = detector.detect_scale_bar(image)
+    
+    # Ensure consistent return format
+    if not isinstance(result, dict):
+        # Handle unexpected return type
+        result = {
+            'scale_detected': False,
+            'micrometers_per_pixel': 0.0,
+            'scale_factor': 0.0,
+            'error': f'Unexpected return type from detector: {type(result)}'
+        }
+    
+    # Add scale_factor for backward compatibility
+    if 'scale_factor' not in result:
+        result['scale_factor'] = result.get('micrometers_per_pixel', 0.0)
+    
+    return result
+
+def detect_scale_factor_only(image_input, **kwargs) -> float:
+    """
+    Convenience function that returns only the scale factor (for backward compatibility).
+    
+    Args:
+        image_input: Either np.ndarray (image) or str (path to image)
         **kwargs: Additional parameters for ScaleBarDetector
         
     Returns:
         Micrometers per pixel conversion factor (0.0 if detection failed)
     """
-    detector = ScaleBarDetector(**kwargs)
-    result = detector.detect_scale_bar(image)
+    result = detect_scale_bar(image_input, **kwargs)
     
     if result['scale_detected']:
         return result['micrometers_per_pixel']

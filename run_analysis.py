@@ -54,9 +54,30 @@ def analyze_image_basic(image_path, project_root, has_porosity=False):
         print(f"✓ Fiber type: {fiber_type} (confidence: {confidence:.3f})")
         
         # Detect scale
-        scale_info = detect_scale_bar(str(image_path))
-        scale_factor = scale_info.get('scale_factor', 1.0)
-        print(f"✓ Scale factor: {scale_factor:.4f} μm/pixel")
+        # FIXED: Detect scale - handle both path and image array properly
+        try:
+            scale_info = detect_scale_bar(str(image_path))  # ✅ Now handles string paths correctly
+            
+            # Extract scale factor safely
+            if isinstance(scale_info, dict):
+                scale_factor = scale_info.get('micrometers_per_pixel', 0.0)
+                if scale_info.get('scale_detected', False):
+                    print(f"✓ Scale factor: {scale_factor:.4f} μm/pixel")
+                else:
+                    print(f"⚠️ Scale detection failed: {scale_info.get('error', 'Unknown error')}")
+                    scale_factor = 1.0  # Default fallback
+            else:
+                # Handle case where function returns a float (old behavior)
+                scale_factor = float(scale_info) if scale_info > 0 else 1.0
+                if scale_factor > 0:
+                    print(f"✓ Scale factor: {scale_factor:.4f} μm/pixel")
+                else:
+                    print("⚠️ Scale detection failed, using default scale")
+                    scale_factor = 1.0
+                    
+        except Exception as scale_error:
+            print(f"⚠️ Scale detection error: {scale_error}")
+            scale_factor = 1.0
         
         # Basic porosity analysis if available
         if has_porosity:
