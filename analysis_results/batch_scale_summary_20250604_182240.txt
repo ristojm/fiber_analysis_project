@@ -1,0 +1,32 @@
+SEM Scale Detection Batch Test Report
+========================================
+Generated: 2025-06-04 18:22:40
+Test directory: c:\Users\risto\Nextcloud\KalvoTech\Operations\Python\fiber_analysis_project\sample_images
+
+Summary:
+  Total images: 4
+  Successful: 1
+  Failed: 3
+  Success rate: 25.0%
+
+Scale Statistics:
+  Range: 0.7371 - 0.7371 um/pixel
+  Mean: 0.7371 um/pixel
+  Median: 0.7371 um/pixel
+  Std Dev: 0.0000 um/pixel
+
+Individual Results:
+--------------------
+hollow_fiber_sample.jpg: FAILED
+  Error: Found scale lines but no valid text nearby
+
+hollow_fiber_sample2.jpg: FAILED
+  Error: Found scale lines but no valid text nearby
+
+hollow_fiber_sample3.jpg: SUCCESS
+  Scale: 0.7371 um/pixel
+  Text: 300 Qum
+
+solid_filament_sample.jpg: FAILED
+  Error: Found scale lines but no valid text nearby
+

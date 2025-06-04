@@ -1,0 +1,25 @@
+SEM Scale Detection Batch Test Report
+========================================
+Generated: 2025-06-04 18:05:54
+Test directory: c:\Users\risto\Nextcloud\KalvoTech\Operations\Python\fiber_analysis_project\sample_images
+
+Summary:
+  Total images: 4
+  Successful: 0
+  Failed: 4
+  Success rate: 0.0%
+
+Individual Results:
+--------------------
+hollow_fiber_sample.jpg: FAILED
+  Error: ScaleBarDetector.__init__() got an unexpected keyword argument 'use_enhanced'
+
+hollow_fiber_sample2.jpg: FAILED
+  Error: ScaleBarDetector.__init__() got an unexpected keyword argument 'use_enhanced'
+
+hollow_fiber_sample3.jpg: FAILED
+  Error: ScaleBarDetector.__init__() got an unexpected keyword argument 'use_enhanced'
+
+solid_filament_sample.jpg: FAILED
+  Error: ScaleBarDetector.__init__() got an unexpected keyword argument 'use_enhanced'
+
