@@ -148,6 +148,7 @@ cython_debug/
 *.png
 *.tif
 *.jpg
+*.csv
 .DS_Store
 Thumbs.db
 
