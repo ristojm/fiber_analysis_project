@@ -1,0 +1,26 @@
+# SEM Fiber Analysis System - Required Packages
+
+# Core dependencies (REQUIRED)
+opencv-python>=4.5.0
+scikit-image>=0.18.0
+scipy>=1.7.0
+numpy>=1.20.0
+matplotlib>=3.3.0
+pandas>=1.3.0
+
+# Optional dependencies for enhanced features
+seaborn>=0.11.0          # Better visualizations
+openpyxl>=3.0.0          # Excel export functionality
+
+# Optional OCR dependencies (for automatic scale bar text detection)
+# Comment out these lines if you want to skip OCR installation:
+pytesseract>=0.3.8       # Tesseract OCR engine
+easyocr>=1.6.0           # EasyOCR engine
+
+# Development/Jupyter dependencies
+jupyter>=1.0.0
+jupyterlab>=3.0.0
+ipywidgets>=7.6.0        # Interactive widgets
+
+# Note: If you have installation issues with pytesseract or easyocr,
+# you can comment them out and use manual scale calibration instead
