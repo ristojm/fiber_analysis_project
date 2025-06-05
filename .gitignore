@@ -140,15 +140,16 @@ cython_debug/
 .vscode/
 
 # Project-specific ignores
-# sample_images/*.jpg
-# sample_images/*.tif
-# sample_images/*.png
-# analysis_results/
+sample_images/*.jpg
+sample_images/*.tif
+sample_images/*.png
+sample_images/analysis_results/*
 *.log
 *.png
 *.tif
 *.jpg
 *.csv
+analysis_results/*
 .DS_Store
 Thumbs.db
 

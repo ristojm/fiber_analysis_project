@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """
-Test Script for SEM Fiber Analysis System
-Run comprehensive tests on fiber detection, scale detection, and porosity analysis
+Updated Test Script for SEM Fiber Analysis System
+Tests with real images from sample_images folder and generates debug visualizations
+
+- Uses actual SEM images from sample_images/
+- Outputs debug images from each processing stage
+- Tests comprehensive analyzer with batch processing
+- Saves batch results to Excel
 """
 
 import sys
@@ -11,154 +16,253 @@ import cv2
 import numpy as np
 import time
 import traceback
+import json
+from datetime import datetime
+import matplotlib.pyplot as plt
 
 # Setup paths
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "modules"))
 
-print("🔧 SEM Fiber Analysis System - Test Suite")
-print("=" * 60)
+print("🔧 SEM Fiber Analysis System - Real Image Test Suite")
+print("=" * 70)
+print(f"Python version: {sys.version}")
+print(f"Working directory: {os.getcwd()}")
+print(f"Project root: {project_root}")
 
-# Test imports
-print("📦 Testing module imports...")
-try:
-    from modules.scale_detection import detect_scale_bar, ScaleBarDetector
-    print("✅ Scale detection module imported")
-except ImportError as e:
-    print(f"❌ Scale detection import failed: {e}")
-    sys.exit(1)
+# Global variables to track available modules
+MODULES_AVAILABLE = {}
+OCR_BACKENDS = {}
 
-try:
-    from modules.fiber_type_detection import FiberTypeDetector, detect_fiber_type
-    print("✅ Fiber type detection module imported")
-except ImportError as e:
-    print(f"❌ Fiber type detection import failed: {e}")
-    sys.exit(1)
-
-try:
-    from modules.image_preprocessing import load_image, preprocess_pipeline
-    print("✅ Image preprocessing module imported")
-except ImportError as e:
-    print(f"❌ Image preprocessing import failed: {e}")
-    sys.exit(1)
-
-try:
-    from modules.porosity_analysis import EnhancedPorosityAnalyzer, analyze_fiber_porosity_enhanced
-    print("✅ Enhanced porosity analysis module imported")
-    POROSITY_AVAILABLE = True
-except ImportError:
-    print("⚠️ Enhanced porosity module not found, trying basic version...")
+def test_imports():
+    """Test all module imports with detailed reporting"""
+    global MODULES_AVAILABLE, OCR_BACKENDS
+    
+    print("\n📦 Testing module imports...")
+    
+    # Test core modules
     try:
-        from modules.porosity_analysis import PorosityAnalyzer
-        print("✅ Basic porosity analysis module imported")
-        POROSITY_AVAILABLE = True
-        ENHANCED_POROSITY = False
+        from modules.image_preprocessing import load_image, preprocess_pipeline, load_and_preprocess
+        print("✅ Image Preprocessing: Available")
+        MODULES_AVAILABLE['image_preprocessing'] = True
     except ImportError as e:
-        print(f"❌ Porosity analysis import failed: {e}")
-        POROSITY_AVAILABLE = False
-
-try:
-    # Import the ComprehensiveFiberAnalyzer class directly
-    sys.path.insert(0, str(project_root))
-    from comprehensive_analyzer_main import ComprehensiveFiberAnalyzer
-    print("✅ Comprehensive analyzer class imported")
-    COMPREHENSIVE_AVAILABLE = True
-except ImportError as e:
-    print(f"⚠️ Comprehensive analyzer class import failed: {e}")
-    print("   Will test comprehensive_analyzer_main.py as standalone script instead")
-    COMPREHENSIVE_AVAILABLE = False
-
-print("\n🎯 All required modules imported successfully!")
-
-def create_test_image():
-    """Create a synthetic test image with realistic fiber structures and scale bar"""
-    print("\n🔬 Creating synthetic test image...")
-    
-    # Create base image
-    height, width = 2048, 2048
-    img = np.ones((height, width), dtype=np.uint8) * 40  # Dark background
-    
-    # Add multiple fiber-like structures with realistic SEM appearance
-    
-    # Main hollow fiber (large, center-left)
-    center_x, center_y = width // 2 - 200, height // 2 - 100
-    
-    # Create hollow fiber with wall thickness
-    wall_thickness = 80
-    outer_radius = 250
-    inner_radius = outer_radius - wall_thickness
-    
-    # Outer fiber boundary (bright)
-    cv2.circle(img, (center_x, center_y), outer_radius, 180, -1)
-    # Inner lumen (dark - should be excluded from porosity)
-    cv2.circle(img, (center_x, center_y), inner_radius, 45, -1)
-    
-    # Add some small pores in the fiber wall
-    pore_positions = [
-        (center_x - 100, center_y - 50, 8),
-        (center_x + 80, center_y + 60, 6),
-        (center_x - 50, center_y + 100, 10),
-        (center_x + 120, center_y - 80, 7),
-        (center_x - 130, center_y + 30, 5)
-    ]
-    
-    for px, py, pore_size in pore_positions:
-        cv2.circle(img, (px, py), pore_size, 45, -1)  # Dark pores
-    
-    # Add a solid filament for comparison (smaller, right side)
-    solid_center_x, solid_center_y = width // 2 + 300, height // 2 + 200
-    cv2.circle(img, (solid_center_x, solid_center_y), 120, 170, -1)
-    
-    # Add a few small pores to the solid filament too
-    cv2.circle(img, (solid_center_x - 40, solid_center_y - 30), 4, 45, -1)
-    cv2.circle(img, (solid_center_x + 35, solid_center_y + 40), 6, 45, -1)
-    
-    # Add realistic noise and texture
-    noise = np.random.normal(0, 8, (height, width))
-    img = np.clip(img + noise, 0, 255).astype(np.uint8)
-    
-    # Apply slight blur for more realistic SEM appearance
-    img = cv2.GaussianBlur(img, (3, 3), 0.5)
-    
-    # Add scale bar at bottom (more realistic)
-    scale_y = height - 120
-    scale_start_x = 200
-    scale_length = 400
-    
-    # Scale bar rectangle (white)
-    cv2.rectangle(img, (scale_start_x, scale_y), 
-                  (scale_start_x + scale_length, scale_y + 15), 255, -1)
-    
-    # Add scale text
-    cv2.putText(img, "100 μm", (scale_start_x, scale_y + 50), 
-                cv2.FONT_HERSHEY_SIMPLEX, 1.5, 255, 2)
-    
-    print(f"✅ Synthetic test image created: {img.shape}")
-    print(f"   Features: 1 hollow fiber + 1 solid filament + pores + scale bar")
-    return img
-
-def test_scale_detection(image, verbose=True):
-    """Test scale detection functionality"""
-    if verbose:
-        print("\n📏 Testing Scale Detection...")
-        print("-" * 30)
+        print(f"❌ Image Preprocessing: {e}")
+        MODULES_AVAILABLE['image_preprocessing'] = False
     
     try:
+        from modules.scale_detection import ScaleBarDetector, detect_scale_bar
+        print("✅ Scale Detection: Available")
+        MODULES_AVAILABLE['scale_detection'] = True
+    except ImportError as e:
+        print(f"❌ Scale Detection: {e}")
+        MODULES_AVAILABLE['scale_detection'] = False
+    
+    try:
+        from modules.fiber_type_detection import FiberTypeDetector, detect_fiber_type
+        print("✅ Fiber Type Detection: Available")
+        MODULES_AVAILABLE['fiber_type_detection'] = True
+    except ImportError as e:
+        print(f"❌ Fiber Type Detection: {e}")
+        MODULES_AVAILABLE['fiber_type_detection'] = False
+    
+    try:
+        from modules.porosity_analysis import PorosityAnalyzer, analyze_fiber_porosity
+        print("✅ Porosity Analysis: Available")
+        MODULES_AVAILABLE['porosity_analysis'] = True
+    except ImportError as e:
+        print(f"❌ Porosity Analysis: {e}")
+        MODULES_AVAILABLE['porosity_analysis'] = False
+    
+    try:
+        from comprehensive_analyzer_main import ComprehensiveFiberAnalyzer
+        print("✅ Comprehensive Analyzer: Available")
+        MODULES_AVAILABLE['comprehensive_analyzer'] = True
+    except ImportError as e:
+        print(f"⚠️ Comprehensive Analyzer: {e}")
+        MODULES_AVAILABLE['comprehensive_analyzer'] = False
+    
+    # Test OCR backends
+    print("\n🔍 Checking OCR backends...")
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        print("✅ RapidOCR: Available")
+        OCR_BACKENDS['rapidocr'] = True
+    except ImportError:
+        print("⚠️ RapidOCR: Not available")
+        OCR_BACKENDS['rapidocr'] = False
+    
+    try:
+        import easyocr
+        print("✅ EasyOCR: Available")
+        OCR_BACKENDS['easyocr'] = True
+    except ImportError:
+        print("⚠️ EasyOCR: Not available")
+        OCR_BACKENDS['easyocr'] = False
+    
+    return MODULES_AVAILABLE, OCR_BACKENDS
+
+def find_sample_image():
+    """Find a sample image from the sample_images folder"""
+    print("\n📁 Looking for sample images...")
+    
+    # Look for sample_images folder
+    sample_dirs = ["sample_images", "test", "images"]
+    sample_extensions = ["*.jpg", "*.jpeg", "*.png", "*.tif", "*.tiff", "*.bmp"]
+    
+    for sample_dir in sample_dirs:
+        sample_path = Path(sample_dir)
+        if sample_path.exists():
+            print(f"   Found directory: {sample_path}")
+            
+            for ext in sample_extensions:
+                image_files = list(sample_path.glob(ext))
+                image_files.extend(list(sample_path.glob(ext.upper())))
+                
+                if image_files:
+                    selected_image = image_files[0]
+                    print(f"✅ Selected sample image: {selected_image}")
+                    print(f"   Available images: {len(image_files)} total")
+                    return selected_image, list(set(image_files))  # Remove duplicates
+    
+    print("❌ No sample images found!")
+    print("   Please add SEM images to one of these folders:")
+    for sample_dir in sample_dirs:
+        print(f"   - {sample_dir}/")
+    
+    return None, []
+
+def create_debug_output_dir():
+    """Create debug output directory"""
+    debug_dir = Path("test_debug_output")
+    debug_dir.mkdir(exist_ok=True)
+    
+    # Create timestamp subdirectory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_dir = debug_dir / f"test_session_{timestamp}"
+    session_dir.mkdir(exist_ok=True)
+    
+    print(f"📁 Debug output directory: {session_dir}")
+    return session_dir
+
+def test_image_preprocessing_with_debug(image_path, debug_dir, verbose=True):
+    """Test image preprocessing and save debug images"""
+    if not MODULES_AVAILABLE.get('image_preprocessing', False):
+        return False, {'error': 'Image preprocessing module not available'}
+    
+    if verbose:
+        print("\n📸 Testing Image Preprocessing with Debug Output...")
+        print("-" * 55)
+    
+    try:
+        from modules.image_preprocessing import load_image, preprocess_pipeline
+        
         start_time = time.time()
         
-        # Test with enhanced detection
-        result = detect_scale_bar(image, use_enhanced=True, debug=verbose)
+        # Test preprocessing pipeline
+        result = preprocess_pipeline(str(image_path))
         
         processing_time = time.time() - start_time
         
-        if result['scale_detected']:
+        if result.get('preprocessing_complete', False):
+            if verbose:
+                print(f"✅ Preprocessing successful!")
+                print(f"   Original shape: {result['image_shape']}")
+                print(f"   Processing steps: {len(result.get('processing_steps', []))}")
+                print(f"   Processing time: {processing_time:.3f}s")
+                
+                for step in result.get('processing_steps', []):
+                    print(f"     - {step}")
+            
+            # Save debug images
+            debug_images = {
+                'original': result.get('original'),
+                'contrast_enhanced': result.get('contrast_enhanced'),
+                'denoised': result.get('denoised'),
+                'normalized': result.get('normalized'),
+                'processed': result.get('processed')
+            }
+            
+            # Create preprocessing debug visualization
+            fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+            axes = axes.flatten()
+            
+            for i, (name, img) in enumerate(debug_images.items()):
+                if img is not None and i < len(axes):
+                    axes[i].imshow(img, cmap='gray')
+                    axes[i].set_title(f'{name.replace("_", " ").title()}')
+                    axes[i].axis('off')
+            
+            # Hide unused subplots
+            for j in range(len(debug_images), len(axes)):
+                axes[j].axis('off')
+            
+            plt.suptitle(f'Image Preprocessing Steps - {Path(image_path).name}', fontsize=16)
+            plt.tight_layout()
+            
+            debug_file = debug_dir / 'preprocessing_steps.png'
+            plt.savefig(debug_file, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            if verbose:
+                print(f"   💾 Debug image saved: {debug_file.name}")
+            
+            return True, result
+        else:
+            if verbose:
+                print(f"❌ Preprocessing failed")
+            return False, result
+            
+    except Exception as e:
+        if verbose:
+            print(f"💥 Preprocessing error: {e}")
+            traceback.print_exc()
+        return False, {'error': str(e)}
+
+def test_scale_detection_with_debug(image, debug_dir, verbose=True):
+    """Test scale detection and save debug images"""
+    if not MODULES_AVAILABLE.get('scale_detection', False):
+        return False, {'error': 'Scale detection module not available'}
+    
+    if verbose:
+        print("\n📏 Testing Scale Detection with Debug Output...")
+        print("-" * 50)
+    
+    try:
+        from modules.scale_detection import detect_scale_bar
+        
+        start_time = time.time()
+        
+        # Test scale detection with debug output
+        result = detect_scale_bar(
+            image,
+            use_enhanced=True,
+            debug=False,  # Don't print debug info
+            save_debug_image=True,
+            output_dir=str(debug_dir)
+        )
+        
+        processing_time = time.time() - start_time
+        
+        if result.get('scale_detected', False):
             if verbose:
                 print(f"✅ Scale detection successful!")
                 print(f"   Scale factor: {result['micrometers_per_pixel']:.4f} μm/pixel")
                 print(f"   Method: {result.get('method_used', 'unknown')}")
                 print(f"   Confidence: {result.get('confidence', 0):.2%}")
+                print(f"   OCR backend: {result.get('ocr_backend', 'unknown')}")
                 print(f"   Processing time: {processing_time:.3f}s")
+                
+                scale_info = result.get('scale_info', {})
+                if scale_info:
+                    print(f"   Scale text detected: '{scale_info.get('text', 'N/A')}'")
+                    print(f"   Scale value: {scale_info.get('value', 0)} {scale_info.get('unit', '')}")
+            
+            # Check if debug image was saved
+            if 'debug_image_path' in result:
+                if verbose:
+                    print(f"   💾 Scale debug image: {Path(result['debug_image_path']).name}")
+            
             return True, result
         else:
             if verbose:
@@ -171,102 +275,21 @@ def test_scale_detection(image, verbose=True):
             traceback.print_exc()
         return False, {'error': str(e)}
 
-def debug_fiber_segmentation(image, fiber_result, save_debug=True):
-    """Debug function to visualize fiber segmentation results"""
-    print("\n🔍 Debugging Fiber Segmentation...")
+def test_fiber_detection_with_debug(image, debug_dir, verbose=True):
+    """Test fiber type detection and save debug images"""
+    if not MODULES_AVAILABLE.get('fiber_type_detection', False):
+        return False, {'error': 'Fiber type detection module not available'}
     
-    if not fiber_result or 'analysis_data' not in fiber_result:
-        print("   ❌ No fiber analysis data available")
-        return
-    
-    analysis_data = fiber_result['analysis_data']
-    
-    # Check what masks are available
-    print(f"   Available data keys: {list(analysis_data.keys())}")
-    
-    if 'fiber_mask' in analysis_data:
-        fiber_mask = analysis_data['fiber_mask']
-        print(f"   Fiber mask shape: {fiber_mask.shape}")
-        print(f"   Fiber mask type: {type(fiber_mask)}")
-        print(f"   Fiber mask unique values: {np.unique(fiber_mask)}")
-        print(f"   Total fiber area: {np.sum(fiber_mask > 0):,} pixels")
-    else:
-        print("   ❌ No fiber_mask found in analysis data")
-    
-    # Check individual results for lumen information
-    individual_results = analysis_data.get('individual_results', [])
-    print(f"   Individual fibers detected: {len(individual_results)}")
-    
-    for i, result in enumerate(individual_results):
-        fiber_props = result.get('fiber_properties', {})
-        has_lumen = result.get('has_lumen', False)
-        lumen_props = result.get('lumen_properties', {})
-        
-        print(f"   Fiber {i+1}:")
-        print(f"     Has lumen: {has_lumen}")
-        print(f"     Fiber area: {fiber_props.get('area', 0):,} pixels")
-        if has_lumen and lumen_props:
-            print(f"     Lumen area: {lumen_props.get('area', 0):,} pixels")
-            print(f"     Lumen ratio: {lumen_props.get('area_ratio', 0):.3f}")
-    
-    if save_debug:
-        try:
-            import matplotlib.pyplot as plt
-            
-            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-            
-            # Original image
-            axes[0].imshow(image, cmap='gray')
-            axes[0].set_title('Original Image')
-            axes[0].axis('off')
-            
-            # Fiber mask
-            if 'fiber_mask' in analysis_data:
-                axes[1].imshow(analysis_data['fiber_mask'], cmap='gray')
-                axes[1].set_title('Fiber Mask')
-                axes[1].axis('off')
-            
-            # Overlay
-            if 'fiber_mask' in analysis_data:
-                overlay = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-                
-                # Draw fiber contours
-                for result in individual_results:
-                    contour = result.get('fiber_properties', {}).get('contour')
-                    has_lumen = result.get('has_lumen', False)
-                    
-                    if contour is not None:
-                        color = (0, 255, 0) if has_lumen else (255, 0, 0)
-                        cv2.drawContours(overlay, [contour], -1, color, 3)
-                        
-                        # Draw lumen if present
-                        if has_lumen:
-                            lumen_contour = result.get('lumen_properties', {}).get('contour')
-                            if lumen_contour is not None:
-                                cv2.drawContours(overlay, [lumen_contour], -1, (0, 255, 255), 2)
-                
-                axes[2].imshow(overlay)
-                axes[2].set_title('Fiber Detection\n(Green=Hollow, Red=Solid, Cyan=Lumen)')
-                axes[2].axis('off')
-            
-            plt.tight_layout()
-            plt.savefig('debug_fiber_segmentation.png', dpi=150, bbox_inches='tight')
-            plt.close()
-            print("   📸 Debug visualization saved: debug_fiber_segmentation.png")
-            
-        except Exception as e:
-            print(f"   ⚠️ Could not save debug visualization: {e}")
-
-def test_fiber_type_detection(image, verbose=True):
-    """Test fiber type detection functionality with enhanced debugging"""
     if verbose:
-        print("\n🧬 Testing Fiber Type Detection...")
-        print("-" * 35)
+        print("\n🧬 Testing Fiber Type Detection with Debug Output...")
+        print("-" * 55)
     
     try:
+        from modules.fiber_type_detection import FiberTypeDetector, visualize_fiber_type_analysis
+        
         start_time = time.time()
         
-        # Initialize detector
+        # Initialize detector with adaptive settings
         detector = FiberTypeDetector()
         
         # Run classification
@@ -281,21 +304,39 @@ def test_fiber_type_detection(image, verbose=True):
             print(f"   Total fibers: {analysis_data.get('total_fibers', 0)}")
             print(f"   Hollow fibers: {analysis_data.get('hollow_fibers', 0)}")
             print(f"   Filaments: {analysis_data.get('filaments', 0)}")
-            print(f"   Method: {analysis_data.get('classification_method', 'unknown')}")
+            print(f"   Classification method: {analysis_data.get('classification_method', 'unknown')}")
             print(f"   Processing time: {processing_time:.3f}s")
+            
+            # Show adaptive thresholds
+            thresholds = analysis_data.get('thresholds', {})
+            if thresholds:
+                print(f"   Adaptive thresholds used:")
+                print(f"     Min fiber area: {thresholds.get('min_fiber_area', 0):,} pixels")
+                print(f"     Max fiber area: {thresholds.get('max_fiber_area', 0):,} pixels")
+                print(f"     Kernel size: {thresholds.get('kernel_size', 0)}")
         
-        result = {
+        # Create debug visualization
+        try:
+            # Redirect the visualization to our debug directory
+            plt.ioff()  # Turn off interactive mode
+            visualize_fiber_type_analysis(image, analysis_data, figsize=(15, 10))
+            
+            debug_file = debug_dir / 'fiber_detection_analysis.png'
+            plt.savefig(debug_file, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            if verbose:
+                print(f"   💾 Debug image saved: {debug_file.name}")
+        except Exception as viz_error:
+            if verbose:
+                print(f"   ⚠️ Could not save debug visualization: {viz_error}")
+        
+        return True, {
             'fiber_type': fiber_type,
             'confidence': confidence,
             'analysis_data': analysis_data,
             'processing_time': processing_time
         }
-        
-        # Add debugging
-        if verbose:
-            debug_fiber_segmentation(image, result)
-        
-        return True, result
         
     except Exception as e:
         if verbose:
@@ -303,49 +344,88 @@ def test_fiber_type_detection(image, verbose=True):
             traceback.print_exc()
         return False, {'error': str(e)}
 
-def test_porosity_analysis(image, fiber_mask, scale_factor, fiber_type, verbose=True):
-    """Test porosity analysis functionality"""
-    if not POROSITY_AVAILABLE:
-        if verbose:
-            print("\n⚠️ Porosity analysis not available - module not found")
-        return False, {'error': 'Porosity module not available'}
+def test_porosity_analysis_with_debug(image, fiber_mask, scale_factor, fiber_type, fiber_analysis_data, debug_dir, verbose=True):
+    """Test porosity analysis and save debug images"""
+    if not MODULES_AVAILABLE.get('porosity_analysis', False):
+        return False, {'error': 'Porosity analysis module not available'}
     
     if verbose:
-        print("\n🕳️ Testing Porosity Analysis...")
-        print("-" * 30)
+        print("\n🕳️ Testing Porosity Analysis with Debug Output...")
+        print("-" * 50)
     
     try:
+        from modules.porosity_analysis import PorosityAnalyzer, visualize_porosity_results
+        
         start_time = time.time()
         
-        # Initialize analyzer
-        analyzer = EnhancedPorosityAnalyzer()
+        # Initialize analyzer with debug-friendly config
+        config = {
+            'pore_detection': {
+                'intensity_percentile': 28,
+                'min_pore_area_pixels': 3,
+                'max_pore_area_ratio': 0.1,
+            },
+            'performance': {
+                'enable_timing': False,  # Disable timing output
+            },
+            'analysis': {
+                'calculate_size_distribution': True,
+                'calculate_spatial_metrics': True,
+                'save_individual_pore_data': True,
+            }
+        }
+        
+        analyzer = PorosityAnalyzer(config=config)
         
         # Run analysis
         result = analyzer.analyze_fiber_porosity(
-            image, 
-            fiber_mask.astype(np.uint8), 
-            scale_factor, 
+            image,
+            fiber_mask.astype(np.uint8),
+            scale_factor,
             fiber_type,
-            None  # No fiber analysis data for this test
+            fiber_analysis_data
         )
         
         processing_time = time.time() - start_time
         
-        if 'porosity_metrics' in result:
+        if result.get('success', False) and 'porosity_metrics' in result:
             pm = result['porosity_metrics']
+            
             if verbose:
                 print(f"✅ Porosity analysis completed!")
+                print(f"   Method: {pm.get('method', 'unknown')}")
                 print(f"   Total porosity: {pm.get('total_porosity_percent', 0):.2f}%")
                 print(f"   Pore count: {pm.get('pore_count', 0)}")
                 print(f"   Average pore size: {pm.get('average_pore_size_um2', 0):.2f} μm²")
                 print(f"   Pore density: {pm.get('pore_density_per_mm2', 0):.1f}/mm²")
-                print(f"   Analysis quality: {result.get('analysis_quality', {}).get('overall_quality', 'unknown')}")
                 print(f"   Processing time: {processing_time:.3f}s")
+                
+                # Quality assessment
+                quality = result.get('quality_assessment', {})
+                if quality:
+                    print(f"   Analysis quality: {quality.get('overall_quality', 'unknown')}")
+                    print(f"   Confidence: {quality.get('confidence', 0):.2f}")
+            
+            # Create debug visualization
+            try:
+                plt.ioff()  # Turn off interactive mode
+                visualize_porosity_results(image, result, figsize=(15, 10))
+                
+                debug_file = debug_dir / 'porosity_analysis.png'
+                plt.savefig(debug_file, dpi=150, bbox_inches='tight')
+                plt.close()
+                
+                if verbose:
+                    print(f"   💾 Debug image saved: {debug_file.name}")
+            except Exception as viz_error:
+                if verbose:
+                    print(f"   ⚠️ Could not save debug visualization: {viz_error}")
             
             return True, result
         else:
+            error = result.get('error', 'Unknown error')
             if verbose:
-                print(f"❌ Porosity analysis failed: {result.get('error', 'Unknown error')}")
+                print(f"❌ Porosity analysis failed: {error}")
             return False, result
             
     except Exception as e:
@@ -354,63 +434,122 @@ def test_porosity_analysis(image, fiber_mask, scale_factor, fiber_type, verbose=
             traceback.print_exc()
         return False, {'error': str(e)}
 
-def test_comprehensive_analyzer(image_path, verbose=True):
-    """Test the comprehensive analyzer"""
+def test_comprehensive_analyzer_batch(sample_images, verbose=True):
+    """Test comprehensive analyzer with batch processing (no debug output)"""
+    if not MODULES_AVAILABLE.get('comprehensive_analyzer', False):
+        return False, {'error': 'Comprehensive analyzer not available'}
+    
     if verbose:
-        print("\n🔬 Testing Comprehensive Analyzer...")
-        print("-" * 40)
+        print("\n🔬 Testing Comprehensive Analyzer - Batch Processing...")
+        print("-" * 60)
     
     try:
-        if COMPREHENSIVE_AVAILABLE:
-            # Test by importing the class directly
-            analyzer = ComprehensiveFiberAnalyzer(debug=verbose)
-            result = analyzer.analyze_single_image(image_path)
+        from comprehensive_analyzer_main import ComprehensiveFiberAnalyzer
+        
+        # Create output directory for batch results
+        batch_dir = Path("test_batch_results")
+        batch_dir.mkdir(exist_ok=True)
+        
+        # Configure analyzer for batch processing (no debug output)
+        config = {
+            'output': {
+                'save_visualizations': False,  # Disable individual visualizations
+                'save_data': True,
+                'create_report': False,  # Disable individual reports
+            },
+            'performance': {
+                'enable_timing': False,  # Disable timing output
+            }
+        }
+        
+        # Initialize analyzer with quiet mode
+        analyzer = ComprehensiveFiberAnalyzer(config=config, debug=False)
+        
+        if verbose:
+            print(f"   Processing {len(sample_images)} images...")
+            print(f"   Output directory: {batch_dir}")
+        
+        # Process sample_images directory
+        sample_dir = Path("sample_images")
+        if sample_dir.exists():
+            start_time = time.time()
             
-            if result['success']:
+            # Run batch analysis
+            batch_result = analyzer.analyze_batch(str(sample_dir), str(batch_dir))
+            
+            total_time = time.time() - start_time
+            
+            if 'error' not in batch_result:
+                batch_info = batch_result['batch_info']
+                
                 if verbose:
-                    print(f"✅ Comprehensive analysis successful!")
-                    comprehensive = result.get('comprehensive_metrics', {})
-                    print(f"   Overall quality: {comprehensive.get('analysis_quality', 'unknown')}")
-                    print(f"   Quality score: {comprehensive.get('quality_score', 0):.2f}/1.0")
-                    print(f"   Total time: {result.get('total_processing_time', 0):.2f}s")
-                return True, result
+                    print(f"✅ Batch analysis completed!")
+                    print(f"   Total images: {batch_info['total_images']}")
+                    print(f"   Successful: {batch_info['successful_analyses']}")
+                    print(f"   Success rate: {batch_info['success_rate']:.1f}%")
+                    print(f"   Total time: {batch_info['total_processing_time']:.2f}s")
+                    print(f"   Average per image: {batch_info['average_time_per_image']:.2f}s")
+                    print(f"   Porosity method: {batch_info.get('porosity_method', 'unknown')}")
+                
+                # Create summary Excel file
+                try:
+                    import pandas as pd
+                    
+                    # Compile results into DataFrame
+                    summary_data = []
+                    for result in batch_result['individual_results']:
+                        if result.get('success', False):
+                            row = {
+                                'image_name': result['image_name'],
+                                'processing_time': result.get('total_processing_time', 0),
+                                'scale_detected': result.get('scale_detection', {}).get('scale_detected', False),
+                                'scale_factor': result.get('scale_detection', {}).get('micrometers_per_pixel', 0),
+                                'fiber_type': result.get('fiber_detection', {}).get('fiber_type', 'unknown'),
+                                'fiber_confidence': result.get('fiber_detection', {}).get('confidence', 0),
+                                'total_fibers': result.get('fiber_detection', {}).get('total_fibers', 0),
+                                'hollow_fibers': result.get('fiber_detection', {}).get('hollow_fibers', 0),
+                                'filaments': result.get('fiber_detection', {}).get('filaments', 0),
+                                'porosity_percent': result.get('porosity_analysis', {}).get('porosity_metrics', {}).get('total_porosity_percent', 0),
+                                'pore_count': result.get('porosity_analysis', {}).get('porosity_metrics', {}).get('pore_count', 0),
+                                'avg_pore_size': result.get('porosity_analysis', {}).get('porosity_metrics', {}).get('average_pore_size_um2', 0),
+                                'analysis_quality': result.get('comprehensive_metrics', {}).get('analysis_quality', 'unknown'),
+                                'quality_score': result.get('comprehensive_metrics', {}).get('quality_score', 0),
+                            }
+                        else:
+                            row = {
+                                'image_name': result['image_name'],
+                                'processing_time': result.get('total_processing_time', 0),
+                                'error': result.get('error', 'Unknown error')
+                            }
+                        summary_data.append(row)
+                    
+                    # Save to Excel
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    excel_file = batch_dir / f'batch_analysis_summary_{timestamp}.xlsx'
+                    
+                    df = pd.DataFrame(summary_data)
+                    df.to_excel(excel_file, index=False)
+                    
+                    if verbose:
+                        print(f"   📊 Excel summary saved: {excel_file.name}")
+                        print(f"   📁 Full batch results: {batch_dir}")
+                
+                except ImportError:
+                    if verbose:
+                        print(f"   ⚠️ pandas not available - Excel export skipped")
+                except Exception as excel_error:
+                    if verbose:
+                        print(f"   ⚠️ Excel export failed: {excel_error}")
+                
+                return True, batch_result
             else:
                 if verbose:
-                    print(f"❌ Comprehensive analysis failed: {result.get('error', 'Unknown error')}")
-                return False, result
+                    print(f"❌ Batch analysis failed: {batch_result.get('error', 'Unknown error')}")
+                return False, batch_result
         else:
-            # Test by running as subprocess
-            import subprocess
-            
             if verbose:
-                print("   Running comprehensive_analyzer_main.py as standalone script...")
-            
-            # Run the comprehensive analyzer as a subprocess
-            cmd = [sys.executable, "comprehensive_analyzer_main.py", "--image", image_path, "--quiet"]
-            
-            try:
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-                
-                if result.returncode == 0:
-                    if verbose:
-                        print(f"✅ Comprehensive analyzer script ran successfully!")
-                        print(f"   Output: {len(result.stdout)} characters")
-                    return True, {'output': result.stdout, 'success': True}
-                else:
-                    if verbose:
-                        print(f"❌ Comprehensive analyzer script failed with return code: {result.returncode}")
-                        if result.stderr:
-                            print(f"   Error: {result.stderr}")
-                    return False, {'error': result.stderr, 'returncode': result.returncode}
-            
-            except subprocess.TimeoutExpired:
-                if verbose:
-                    print(f"❌ Comprehensive analyzer script timed out after 60 seconds")
-                return False, {'error': 'Timeout after 60 seconds'}
-            except FileNotFoundError:
-                if verbose:
-                    print(f"❌ comprehensive_analyzer_main.py not found")
-                return False, {'error': 'Script file not found'}
+                print(f"❌ sample_images directory not found")
+            return False, {'error': 'sample_images directory not found'}
             
     except Exception as e:
         if verbose:
@@ -418,180 +557,136 @@ def test_comprehensive_analyzer(image_path, verbose=True):
             traceback.print_exc()
         return False, {'error': str(e)}
 
-def run_individual_tests():
-    """Run individual module tests"""
-    print("\n🧪 INDIVIDUAL MODULE TESTS")
-    print("=" * 60)
-    
-    # Create test image
-    test_img = create_test_image()
-    
-    # Test 1: Scale Detection
-    scale_success, scale_result = test_scale_detection(test_img)
-    scale_factor = scale_result.get('micrometers_per_pixel', 1.0) if scale_success else 1.0
-    
-    # Test 2: Fiber Type Detection
-    fiber_success, fiber_result = test_fiber_type_detection(test_img)
-    fiber_type = fiber_result.get('fiber_type', 'unknown') if fiber_success else 'unknown'
-    
-    # Extract fiber mask for porosity test
-    fiber_mask = np.zeros_like(test_img, dtype=bool)
-    if fiber_success and 'analysis_data' in fiber_result:
-        analysis_data = fiber_result['analysis_data']
-        if 'fiber_mask' in analysis_data:
-            fiber_mask = analysis_data['fiber_mask']
-        else:
-            # Create simple circular mask for testing
-            center = (test_img.shape[1]//2, test_img.shape[0]//2 - 200)
-            cv2.circle(fiber_mask.astype(np.uint8), center, 300, 1, -1)
-            fiber_mask = fiber_mask.astype(bool)
-    
-    # Test 3: Porosity Analysis
-    porosity_success, porosity_result = test_porosity_analysis(
-        test_img, fiber_mask, scale_factor, fiber_type
-    )
-    
-    # Summary
-    print(f"\n📊 INDIVIDUAL TEST SUMMARY")
-    print("-" * 30)
-    print(f"Scale Detection: {'✅ PASS' if scale_success else '❌ FAIL'}")
-    print(f"Fiber Detection: {'✅ PASS' if fiber_success else '❌ FAIL'}")
-    print(f"Porosity Analysis: {'✅ PASS' if porosity_success else '❌ FAIL'}")
-    
-    overall_success = scale_success and fiber_success and porosity_success
-    print(f"Overall: {'✅ ALL TESTS PASSED' if overall_success else '⚠️ SOME TESTS FAILED'}")
-    
-    return overall_success
-
-def run_comprehensive_test():
-    """Run comprehensive analyzer test"""
-    print("\n🔬 COMPREHENSIVE ANALYZER TEST")
-    print("=" * 60)
-    
-    # Save test image to file
-    test_img = create_test_image()
-    test_path = "test_fiber_image.png"
-    cv2.imwrite(test_path, test_img)
-    print(f"📁 Test image saved: {test_path}")
-    
-    try:
-        # Test comprehensive analyzer
-        comp_success, comp_result = test_comprehensive_analyzer(test_path)
-        
-        # Cleanup
-        if os.path.exists(test_path):
-            os.remove(test_path)
-        
-        print(f"\n📊 COMPREHENSIVE TEST SUMMARY")
-        print("-" * 35)
-        print(f"Comprehensive Analyzer: {'✅ PASS' if comp_success else '❌ FAIL'}")
-        
-        return comp_success
-        
-    except Exception as e:
-        print(f"💥 Comprehensive test error: {e}")
-        return False
-    finally:
-        # Cleanup
-        if os.path.exists(test_path):
-            os.remove(test_path)
-
-def test_with_real_image():
-    """Test with real SEM image if available"""
-    print("\n📸 REAL IMAGE TEST")
-    print("=" * 60)
-    
-    # Look for sample images
-    sample_dirs = ["sample_images", "images", "test_images"]
-    sample_extensions = ["*.jpg", "*.jpeg", "*.png", "*.tif", "*.tiff"]
-    
-    real_image_path = None
-    
-    for sample_dir in sample_dirs:
-        sample_path = Path(sample_dir)
-        if sample_path.exists():
-            for ext in sample_extensions:
-                image_files = list(sample_path.glob(ext))
-                if image_files:
-                    real_image_path = image_files[0]
-                    break
-            if real_image_path:
-                break
-    
-    if real_image_path:
-        print(f"📁 Found real image: {real_image_path}")
-        
-        try:
-            # Load image
-            img = load_image(str(real_image_path))
-            if img is not None:
-                print(f"✅ Image loaded successfully: {img.shape}")
-                
-                # Test individual modules
-                print("\n🔍 Testing with real image...")
-                
-                scale_success, scale_result = test_scale_detection(img, verbose=False)
-                fiber_success, fiber_result = test_fiber_type_detection(img, verbose=False)
-                
-                print(f"Scale Detection: {'✅ PASS' if scale_success else '❌ FAIL'}")
-                print(f"Fiber Detection: {'✅ PASS' if fiber_success else '❌ FAIL'}")
-                
-                if scale_success:
-                    print(f"   Scale factor: {scale_result.get('micrometers_per_pixel', 0):.4f} μm/pixel")
-                
-                if fiber_success:
-                    print(f"   Fiber type: {fiber_result.get('fiber_type', 'unknown')}")
-                    print(f"   Confidence: {fiber_result.get('confidence', 0):.3f}")
-                
-                return True
-            else:
-                print(f"❌ Could not load image: {real_image_path}")
-                return False
-                
-        except Exception as e:
-            print(f"💥 Real image test error: {e}")
-            return False
-    else:
-        print("📁 No real SEM images found in common directories")
-        print("   Looked in: sample_images/, images/, test_images/")
-        print("   Supported formats: .jpg, .jpeg, .png, .tif, .tiff")
-        return False
-
-def main():
-    """Main test runner"""
-    print(f"\n🚀 Starting SEM Fiber Analysis System Tests")
-    print(f"Python version: {sys.version}")
-    print(f"Working directory: {os.getcwd()}")
+def run_individual_module_tests(sample_image, debug_dir):
+    """Run tests on individual modules with debug output"""
+    print(f"\n🧪 INDIVIDUAL MODULE TESTS")
+    print(f"Image: {sample_image.name}")
+    print("=" * 70)
     
     results = {}
     
-    # Run individual module tests
-    results['individual'] = run_individual_tests()
+    # Test 1: Image Preprocessing
+    preprocessing_success, preprocessing_result = test_image_preprocessing_with_debug(
+        sample_image, debug_dir, verbose=True
+    )
+    results['preprocessing'] = preprocessing_success
     
-    # Run comprehensive test
-    results['comprehensive'] = run_comprehensive_test()
+    if preprocessing_success:
+        processed_image = preprocessing_result.get('processed')
+        if processed_image is None:
+            processed_image = preprocessing_result.get('original')
+    else:
+        # Fallback: load image directly
+        if MODULES_AVAILABLE.get('image_preprocessing', False):
+            from modules.image_preprocessing import load_image
+            processed_image = load_image(str(sample_image))
+        else:
+            processed_image = cv2.imread(str(sample_image), cv2.IMREAD_GRAYSCALE)
     
-    # Test with real image if available
-    results['real_image'] = test_with_real_image()
+    if processed_image is None:
+        print("❌ Could not load or process image - aborting tests")
+        return results
+    
+    # Test 2: Scale Detection
+    scale_success, scale_result = test_scale_detection_with_debug(
+        processed_image, debug_dir, verbose=True
+    )
+    results['scale_detection'] = scale_success
+    scale_factor = scale_result.get('micrometers_per_pixel', 1.0) if scale_success else 1.0
+    
+    # Test 3: Fiber Type Detection
+    fiber_success, fiber_result = test_fiber_detection_with_debug(
+        processed_image, debug_dir, verbose=True
+    )
+    results['fiber_detection'] = fiber_success
+    
+    if fiber_success:
+        fiber_type = fiber_result.get('fiber_type', 'unknown')
+        fiber_analysis_data = fiber_result.get('analysis_data', {})
+        fiber_mask = fiber_analysis_data.get('fiber_mask', np.zeros_like(processed_image, dtype=bool))
+    else:
+        fiber_type = 'unknown'
+        fiber_analysis_data = {}
+        # Create a simple circular mask for testing
+        fiber_mask = np.zeros_like(processed_image, dtype=bool)
+        center = (processed_image.shape[1]//2, processed_image.shape[0]//2)
+        cv2.circle(fiber_mask.astype(np.uint8), center, 300, 1, -1)
+        fiber_mask = fiber_mask.astype(bool)
+    
+    # Test 4: Porosity Analysis
+    if np.sum(fiber_mask) > 1000:  # Ensure sufficient fiber area
+        porosity_success, porosity_result = test_porosity_analysis_with_debug(
+            processed_image, fiber_mask, scale_factor, fiber_type, 
+            fiber_analysis_data, debug_dir, verbose=True
+        )
+        results['porosity_analysis'] = porosity_success
+    else:
+        print("\n⚠️ Insufficient fiber area for porosity analysis test")
+        results['porosity_analysis'] = False
+    
+    return results
+
+def run_batch_test(sample_images):
+    """Run comprehensive analyzer batch test"""
+    print(f"\n🔬 COMPREHENSIVE ANALYZER BATCH TEST")
+    print("=" * 70)
+    
+    batch_success, batch_result = test_comprehensive_analyzer_batch(
+        sample_images, verbose=True
+    )
+    
+    return {'batch_analysis': batch_success}
+
+def main():
+    """Main test runner"""
+    print(f"\n🚀 Starting Real Image Tests")
+    
+    # Test imports
+    test_imports()
+    
+    # Find sample image
+    sample_image, all_sample_images = find_sample_image()
+    if sample_image is None:
+        print("\n❌ Cannot run tests without sample images!")
+        return False
+    
+    # Create debug output directory
+    debug_dir = create_debug_output_dir()
+    
+    # Run individual module tests with debug output
+    individual_results = run_individual_module_tests(sample_image, debug_dir)
+    
+    # Run batch test if we have multiple images
+    batch_results = {}
+    if len(all_sample_images) > 1:
+        batch_results = run_batch_test(all_sample_images)
+    else:
+        print(f"\n⚠️ Only one sample image found - skipping batch test")
+        print(f"   Add more images to sample_images/ for batch testing")
+    
+    # Combine results
+    all_results = {**individual_results, **batch_results}
     
     # Final summary
     print(f"\n🎯 FINAL TEST SUMMARY")
-    print("=" * 60)
+    print("=" * 70)
     
-    for test_name, success in results.items():
+    for test_name, success in all_results.items():
         status = "✅ PASS" if success else "❌ FAIL"
         print(f"{test_name.replace('_', ' ').title()}: {status}")
     
-    overall_success = all(results.values())
-    print(f"\nOverall Result: {'🎉 ALL SYSTEMS GO!' if overall_success else '⚠️ SOME ISSUES DETECTED'}")
+    overall_success = all(all_results.values())
+    
+    print(f"\nOverall Result: {'🎉 ALL TESTS PASSED!' if overall_success else '⚠️ SOME TESTS FAILED'}")
+    print(f"Debug outputs saved to: {debug_dir}")
+    
+    if batch_results.get('batch_analysis', False):
+        print(f"Batch results saved to: test_batch_results/")
     
     if overall_success:
-        print("\n✅ Your SEM Fiber Analysis System is ready to use!")
-        print("   You can now run:")
-        print("   python comprehensive_analyzer_main.py --image your_image.jpg")
-        print("   python comprehensive_analyzer_main.py --batch your_image_folder/")
+        print("\n✅ Your SEM Fiber Analysis System is working correctly!")
     else:
-        print("\n🔧 System needs attention. Check the failed tests above.")
+        print("\n🔧 Some tests failed - check the output above for details")
     
     return overall_success
 
