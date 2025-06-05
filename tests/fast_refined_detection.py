@@ -531,7 +531,7 @@ def test_fast_refined():
     
     # Find image
     image_paths = [
-        project_root / "sample_images" / "28d_001.jpg",
+        project_root / "sample_images" / "34d_001.jpg",
         project_root / "28d_001.jpg",
     ]
     

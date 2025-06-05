@@ -1,5 +1,6 @@
 """
 SEM Fiber Analysis System - Adaptive Fiber Type Detection Module
+FIXED: Ensures proper fiber mask creation and storage
 UPDATED: Dynamic thresholds that adapt to image resolution and content
 """
 
@@ -14,6 +15,7 @@ class FiberTypeDetector:
     """
     Adaptive fiber type detector that automatically adjusts to image characteristics.
     Uses resolution-aware thresholds for robust performance across different imaging conditions.
+    FIXED: Now properly creates and stores comprehensive fiber masks.
     """
     
     def __init__(self, 
@@ -106,6 +108,7 @@ class FiberTypeDetector:
     def segment_fibers(self, image: np.ndarray) -> Tuple[np.ndarray, List[Dict]]:
         """
         Adaptive fiber segmentation using calculated thresholds.
+        FIXED: Ensures proper fiber mask creation
         
         Args:
             image: Preprocessed grayscale image
@@ -130,7 +133,7 @@ class FiberTypeDetector:
         
         # Filter contours by adaptive thresholds
         fiber_properties = []
-        fiber_mask = np.zeros_like(binary)
+        fiber_mask = np.zeros_like(binary, dtype=np.uint8)  # FIXED: Proper initialization
         
         for i, contour in enumerate(contours):
             area = cv2.contourArea(contour)
@@ -148,6 +151,8 @@ class FiberTypeDetector:
                 props['contour'] = contour
                 props['thresholds'] = thresholds  # Store for later use
                 fiber_properties.append(props)
+                
+                # FIXED: Add this fiber to the mask immediately
                 cv2.fillPoly(fiber_mask, [contour], 255)
         
         return fiber_mask, fiber_properties
@@ -348,6 +353,7 @@ class FiberTypeDetector:
     def classify_fiber_type(self, image: np.ndarray) -> Tuple[str, float, Dict]:
         """
         Main adaptive classification function.
+        FIXED: Now properly creates and stores comprehensive fiber mask
         
         Args:
             image: Input grayscale image
@@ -368,7 +374,13 @@ class FiberTypeDetector:
             return "unknown", 0.0, {
                 "error": "No valid fibers detected", 
                 "thresholds": thresholds,
-                "total_fibers": 0
+                "total_fibers": 0,
+                "hollow_fibers": 0,
+                "filaments": 0,
+                "fiber_mask": np.zeros_like(image, dtype=np.uint8),  # FIXED: Always include mask
+                "individual_results": [],
+                "preprocessed_image": preprocessed,
+                "classification_method": "adaptive_largest_fiber"
             }
         
         # Analyze each fiber
@@ -399,11 +411,14 @@ class FiberTypeDetector:
         hollow_count = sum(1 for result in analysis_results if result['has_lumen'])
         total_count = len(analysis_results)
         
+        # FIXED: Create comprehensive fiber mask from ALL detected fibers
+        comprehensive_fiber_mask = self._create_comprehensive_fiber_mask(image, analysis_results)
+        
         analysis_data = {
             'total_fibers': total_count,
             'hollow_fibers': hollow_count,
             'filaments': total_count - hollow_count,
-            'fiber_mask': fiber_mask,
+            'fiber_mask': comprehensive_fiber_mask,  # FIXED: Proper comprehensive mask
             'individual_results': analysis_results,
             'preprocessed_image': preprocessed,
             'thresholds': thresholds,
@@ -411,6 +426,36 @@ class FiberTypeDetector:
         }
         
         return final_type, final_confidence, analysis_data
+    
+    def _create_comprehensive_fiber_mask(self, image: np.ndarray, analysis_results: List[Dict]) -> np.ndarray:
+        """
+        FIXED: Create a comprehensive fiber mask from all detected fibers
+        
+        Args:
+            image: Original image for shape reference
+            analysis_results: List of individual fiber analysis results
+            
+        Returns:
+            Comprehensive binary mask with all fibers (uint8, 0 or 255)
+        """
+        # Create empty mask with proper dtype
+        comprehensive_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+        
+        # Add each fiber to the comprehensive mask
+        for result in analysis_results:
+            fiber_props = result.get('fiber_properties', {})
+            contour = fiber_props.get('contour')
+            
+            if contour is not None:
+                try:
+                    # Fill this fiber's area in the comprehensive mask
+                    cv2.fillPoly(comprehensive_mask, [contour], 255)
+                except Exception as e:
+                    # Skip this contour if there's an error
+                    print(f"Warning: Could not add fiber contour to mask: {e}")
+                    continue
+        
+        return comprehensive_mask
     
     def _calculate_type_confidence(self, fiber_props: Dict, has_lumen: bool, lumen_props: Dict, thresholds: Dict) -> float:
         """
@@ -518,7 +563,10 @@ def visualize_fiber_type_analysis(image: np.ndarray, analysis_data: Dict, figsiz
     summary_text += f"Adaptive Thresholds:\n"
     summary_text += f"Min area: {thresholds.get('min_fiber_area', 0):,}\n"
     summary_text += f"Max area: {thresholds.get('max_fiber_area', 0):,}\n"
-    summary_text += f"Kernel: {thresholds.get('kernel_size', 0)}"
+    summary_text += f"Kernel: {thresholds.get('kernel_size', 0)}\n\n"
+    summary_text += f"Fiber Mask:\n"
+    summary_text += f"Pixels: {np.sum(analysis_data['fiber_mask'] > 0):,}\n"
+    summary_text += f"Coverage: {np.sum(analysis_data['fiber_mask'] > 0) / analysis_data['fiber_mask'].size * 100:.1f}%"
     
     axes[4].text(0.05, 0.95, summary_text, transform=axes[4].transAxes,
                 fontsize=10, verticalalignment='top', fontfamily='monospace')

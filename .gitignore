@@ -144,6 +144,8 @@ sample_images/*.jpg
 sample_images/*.tif
 sample_images/*.png
 sample_images/analysis_results/*
+batch_analysis_results/*
+tests/test_results/*
 *.log
 *.png
 *.tif
