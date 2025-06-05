@@ -184,6 +184,44 @@ class ComprehensiveFiberAnalyzer:
                 'dpi': 300,
             }
         }
+    
+    def fix_fiber_mask_extraction(self, image: np.ndarray, fiber_analysis_data: Dict, debug: bool = False) -> np.ndarray:
+        """
+        FIXED: Simple and clean fiber mask extraction from analysis data.
+        
+        Args:
+            image: Original image for shape reference
+            fiber_analysis_data: Results from fiber type detection
+            debug: Enable debug output
+            
+        Returns:
+            Binary fiber mask (uint8, 0 or 255)
+        """
+        
+        if debug:
+            print(f"   🔧 Extracting fiber mask from analysis data...")
+        
+        # Get fiber mask from analysis data
+        fiber_mask = fiber_analysis_data.get('fiber_mask')
+        
+        if fiber_mask is not None and isinstance(fiber_mask, np.ndarray):
+            # Ensure proper format
+            if fiber_mask.dtype != np.uint8:
+                fiber_mask = (fiber_mask > 0).astype(np.uint8) * 255
+            
+            # Check if mask has sufficient content
+            mask_area = np.sum(fiber_mask > 0)
+            
+            if debug:
+                print(f"   ✅ Fiber mask extracted: {mask_area:,} pixels")
+                print(f"   Coverage: {mask_area / fiber_mask.size * 100:.1f}%")
+            
+            return fiber_mask
+        else:
+            if debug:
+                print(f"   ❌ No valid fiber mask found in analysis data")
+            # Return empty mask as fallback
+            return np.zeros(image.shape[:2], dtype=np.uint8)
 
     def analyze_single_image(self, image_path: str, 
                            output_dir: Optional[str] = None) -> Dict[str, Any]:
