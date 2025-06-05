@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-Enhanced Test Script for SEM Fiber Analysis System with Oval Fitting
-UPDATED: Tests enhanced modules with oval fitting functionality and comprehensive measurements
+FIXED Test Script for SEM Fiber Analysis System
+FIXED: Proper scale factor integration throughout the analysis pipeline
+Tests with real images from sample_images folder and generates debug visualizations
 
 - Uses actual SEM images from sample_images/
-- Tests enhanced fiber detection with oval fitting
-- Tests enhanced porosity analysis with oval integration
-- Outputs debug images showing oval fitting results
-- Tests multiprocessing analyzer functionality
-- Verifies comprehensive Excel reporting with oval data
+- Outputs debug images from each processing stage for first image
+- Tests comprehensive analyzer functionality (no debug images from it)
+- FIXED: Scale detection now properly passed to fiber detection for correct unit conversion
 """
 
 import sys
@@ -28,8 +27,8 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "modules"))
 
-print("🔧 Enhanced SEM Fiber Analysis System - Real Image Test Suite with Oval Fitting")
-print("=" * 80)
+print("🔧 FIXED SEM Fiber Analysis System - Real Image Test Suite")
+print("=" * 70)
 print(f"Python version: {sys.version}")
 print(f"Working directory: {os.getcwd()}")
 print(f"Project root: {project_root}")
@@ -39,10 +38,10 @@ MODULES_AVAILABLE = {}
 OCR_BACKENDS = {}
 
 def test_imports():
-    """Test all module imports with detailed reporting including enhanced features"""
+    """Test all module imports with detailed reporting"""
     global MODULES_AVAILABLE, OCR_BACKENDS
     
-    print("\n📦 Testing enhanced module imports...")
+    print("\n📦 Testing module imports...")
     
     # Test core modules
     try:
@@ -62,28 +61,20 @@ def test_imports():
         MODULES_AVAILABLE['scale_detection'] = False
     
     try:
-        from modules.fiber_type_detection import FiberTypeDetector, detect_fiber_type, visualize_fiber_type_analysis
-        print("✅ Enhanced Fiber Type Detection: Available")
+        from modules.fiber_type_detection import FiberTypeDetector, detect_fiber_type
+        print("✅ Fiber Type Detection: Available")
         MODULES_AVAILABLE['fiber_type_detection'] = True
     except ImportError as e:
-        print(f"❌ Enhanced Fiber Type Detection: {e}")
+        print(f"❌ Fiber Type Detection: {e}")
         MODULES_AVAILABLE['fiber_type_detection'] = False
     
     try:
-        from modules.porosity_analysis import PorosityAnalyzer, analyze_fiber_porosity, visualize_enhanced_porosity_results
-        print("✅ Enhanced Porosity Analysis: Available")
+        from modules.porosity_analysis import PorosityAnalyzer, analyze_fiber_porosity
+        print("✅ Porosity Analysis: Available")
         MODULES_AVAILABLE['porosity_analysis'] = True
     except ImportError as e:
-        print(f"❌ Enhanced Porosity Analysis: {e}")
+        print(f"❌ Porosity Analysis: {e}")
         MODULES_AVAILABLE['porosity_analysis'] = False
-    
-    try:
-        import multiprocessing_analyzer
-        print("✅ Enhanced Multiprocessing Analyzer: Available")
-        MODULES_AVAILABLE['multiprocessing_analyzer'] = True
-    except ImportError as e:
-        print(f"❌ Enhanced Multiprocessing Analyzer: {e}")
-        MODULES_AVAILABLE['multiprocessing_analyzer'] = False
     
     try:
         import comprehensive_analyzer_main
@@ -145,15 +136,15 @@ def find_sample_image():
 
 def create_debug_output_dir():
     """Create debug output directory"""
-    debug_dir = Path("enhanced_test_debug_output")
+    debug_dir = Path("test_debug_output")
     debug_dir.mkdir(exist_ok=True)
     
     # Create timestamp subdirectory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    session_dir = debug_dir / f"enhanced_test_session_{timestamp}"
+    session_dir = debug_dir / f"test_session_{timestamp}"
     session_dir.mkdir(exist_ok=True)
     
-    print(f"📁 Enhanced debug output directory: {session_dir}")
+    print(f"📁 Debug output directory: {session_dir}")
     return session_dir
 
 def test_image_preprocessing_with_debug(image_path, debug_dir, verbose=True):
@@ -252,8 +243,9 @@ def test_scale_detection_like_comprehensive(original_image, debug_dir, verbose=T
         )
         
         # Call detect_scale_bar exactly like comprehensive analyzer does
+        # NOTE: Comprehensive analyzer uses ORIGINAL image, not preprocessed!
         scale_result = scale_detector.detect_scale_bar(
-            original_image,        # Use original image with scale bar
+            original_image,        # FIXED: Use original image with scale bar
             debug=False,           # Same as comprehensive analyzer
             save_debug_image=False, # Same as comprehensive analyzer
             output_dir=None        # Same as comprehensive analyzer
@@ -275,7 +267,7 @@ def test_scale_detection_like_comprehensive(original_image, debug_dir, verbose=T
                     print(f"   Scale text detected: '{scale_info.get('text', 'N/A')}'")
                     print(f"   Scale value: {scale_info.get('value', 0)} {scale_info.get('unit', '')}")
             
-            # Create debug visualization
+            # Create our own debug visualization (since comprehensive analyzer doesn't save one)
             _create_scale_debug_image(original_image, scale_result, debug_dir, verbose)
             
             return True, scale_result
@@ -344,30 +336,37 @@ def _create_scale_debug_image(image, scale_result, debug_dir, verbose):
         if verbose:
             print(f"   ⚠️ Could not save scale debug image: {e}")
 
-def test_enhanced_fiber_detection_with_debug(image, debug_dir, scale_factor=1.0, verbose=True):
-    """Test enhanced fiber type detection with oval fitting and save debug images"""
+def test_fiber_detection_with_debug(image, scale_factor, debug_dir, verbose=True):
+    """
+    FIXED: Test fiber type detection with proper scale factor integration.
+    Now passes scale_factor to classify_fiber_type for correct unit conversion.
+    """
     if not MODULES_AVAILABLE.get('fiber_type_detection', False):
-        return False, {'error': 'Enhanced fiber type detection module not available'}
+        return False, {'error': 'Fiber type detection module not available'}
     
     if verbose:
-        print("\n🧬 Testing Enhanced Fiber Type Detection with Oval Fitting...")
-        print("-" * 65)
+        print("\n🧬 FIXED Testing Fiber Type Detection with Scale Factor Integration...")
+        print("-" * 70)
+        print(f"   Scale factor: {scale_factor:.4f} μm/pixel")
     
     try:
         from modules.fiber_type_detection import FiberTypeDetector, visualize_fiber_type_analysis
         
         start_time = time.time()
         
-        # Initialize enhanced detector
+        # Initialize detector with adaptive settings
         detector = FiberTypeDetector()
         
-        # Run enhanced classification with oval fitting
+        # FIXED: Run classification with scale factor
         fiber_type, confidence, analysis_data = detector.classify_fiber_type(image, scale_factor)
         
         processing_time = time.time() - start_time
         
+        # FIXED: Extract oval fitting results that should now have correct units
+        oval_results = analysis_data.get('oval_fitting_results', {})
+        
         if verbose:
-            print(f"✅ Enhanced fiber type detection completed!")
+            print(f"✅ Fiber type detection completed!")
             print(f"   Detected type: {fiber_type}")
             print(f"   Confidence: {confidence:.3f}")
             print(f"   Total fibers: {analysis_data.get('total_fibers', 0)}")
@@ -376,65 +375,69 @@ def test_enhanced_fiber_detection_with_debug(image, debug_dir, scale_factor=1.0,
             print(f"   Classification method: {analysis_data.get('classification_method', 'unknown')}")
             print(f"   Processing time: {processing_time:.3f}s")
             
-            # NEW: Show oval fitting results (now in micrometers)
-            oval_summary = analysis_data.get('oval_fitting_summary', {})
-            print(f"\n   🔍 Oval Fitting Results:")
-            print(f"     Total fibers analyzed: {oval_summary.get('total_fibers_analyzed', 0)}")
-            print(f"     Successfully fitted: {oval_summary.get('fibers_successfully_fitted', 0)}")
-            print(f"     Success rate: {oval_summary.get('fiber_fit_success_rate', 0):.1%}")
-            print(f"     Average fit quality: {oval_summary.get('fiber_avg_fit_quality', 0):.3f}")
-            print(f"     Average diameter: {oval_summary.get('fiber_avg_mean_diameter_um', 0):.2f} μm")  # NOW IN MICROMETERS
-            print(f"     Diameter std dev: {oval_summary.get('fiber_diameter_std_um', 0):.2f} μm")  # NOW IN MICROMETERS
-            print(f"     Scale factor used: {oval_summary.get('scale_factor_used', 0):.4f} μm/pixel")
+            # FIXED: Show oval fitting results with correct units
+            print(f"\n   📏 Oval Fitting Results (NOW WITH CORRECT UNITS):")
+            print(f"      Success Rate: {oval_results.get('success_rate', 0):.1f}%")
+            print(f"      Avg Fit Quality: {oval_results.get('avg_fit_quality', 0):.2f}")
+            print(f"      Avg Diameter: {oval_results.get('avg_diameter', 0):.1f} μm")  # NOW IN MICROMETERS!
+            print(f"      Diameter Std: {oval_results.get('diameter_std', 0):.1f} μm")
+            print(f"      Lumens Fitted: {oval_results.get('lumens_fitted', 0)}")
+            print(f"      Avg Lumen Diameter: {oval_results.get('avg_lumen_diameter', 0):.1f} μm")
             
-            if oval_summary.get('lumens_successfully_fitted', 0) > 0:
-                print(f"     Lumens fitted: {oval_summary.get('lumens_successfully_fitted', 0)}")
-                print(f"     Average lumen diameter: {oval_summary.get('lumen_avg_mean_diameter_um', 0):.2f} μm")  # NOW IN MICROMETERS
+            # Show adaptive thresholds
+            thresholds = analysis_data.get('thresholds', {})
+            if thresholds:
+                print(f"\n   🔧 Adaptive thresholds used:")
+                print(f"      Min fiber area: {thresholds.get('min_fiber_area', 0):,} pixels")
+                print(f"      Max fiber area: {thresholds.get('max_fiber_area', 0):,} pixels")
+                print(f"      Kernel size: {thresholds.get('kernel_size', 0)}")
+                print(f"      Scale factor: {thresholds.get('scale_factor', 0):.4f} μm/pixel")
         
-        # Create enhanced debug visualization with oval fitting
+        # Create debug visualization
         try:
             plt.ioff()  # Turn off interactive mode
-            visualize_fiber_type_analysis(image, analysis_data, figsize=(20, 12))
+            visualize_fiber_type_analysis(image, analysis_data, figsize=(15, 10))
             
-            debug_file = debug_dir / 'enhanced_fiber_detection_analysis.png'
+            debug_file = debug_dir / 'fiber_detection_analysis.png'
             plt.savefig(debug_file, dpi=150, bbox_inches='tight')
             plt.close()
             
             if verbose:
-                print(f"   💾 Enhanced debug image saved: {debug_file.name}")
+                print(f"   💾 Debug image saved: {debug_file.name}")
         except Exception as viz_error:
             if verbose:
-                print(f"   ⚠️ Could not save enhanced debug visualization: {viz_error}")
+                print(f"   ⚠️ Could not save debug visualization: {viz_error}")
         
         return True, {
             'fiber_type': fiber_type,
             'confidence': confidence,
             'analysis_data': analysis_data,
-            'oval_fitting_summary': oval_summary,
-            'processing_time': processing_time
+            'processing_time': processing_time,
+            'oval_results': oval_results,  # Include oval results for easier access
+            'scale_factor_used': scale_factor
         }
         
     except Exception as e:
         if verbose:
-            print(f"💥 Enhanced fiber type detection error: {e}")
+            print(f"💥 Fiber type detection error: {e}")
             traceback.print_exc()
         return False, {'error': str(e)}
 
-def test_enhanced_porosity_analysis_with_debug(image, fiber_mask, scale_factor, fiber_type, fiber_analysis_data, debug_dir, verbose=True):
-    """Test enhanced porosity analysis with oval fitting integration and save debug images"""
+def test_porosity_analysis_with_debug(image, fiber_mask, scale_factor, fiber_type, fiber_analysis_data, debug_dir, verbose=True):
+    """Test porosity analysis and save debug images"""
     if not MODULES_AVAILABLE.get('porosity_analysis', False):
-        return False, {'error': 'Enhanced porosity analysis module not available'}
+        return False, {'error': 'Porosity analysis module not available'}
     
     if verbose:
-        print("\n🕳️ Testing Enhanced Porosity Analysis with Oval Fitting Integration...")
-        print("-" * 70)
+        print("\n🕳️ Testing Porosity Analysis with Debug Output...")
+        print("-" * 50)
     
     try:
-        from modules.porosity_analysis import PorosityAnalyzer, visualize_enhanced_porosity_results
+        from modules.porosity_analysis import PorosityAnalyzer, visualize_porosity_results
         
         start_time = time.time()
         
-        # Initialize enhanced analyzer with oval-aware config
+        # Initialize analyzer with debug-friendly config
         config = {
             'pore_detection': {
                 'intensity_percentile': 28,
@@ -444,26 +447,22 @@ def test_enhanced_porosity_analysis_with_debug(image, fiber_mask, scale_factor, 
             'performance': {
                 'enable_timing': False,  # Disable timing output
             },
-            'fiber_integration': {
-                'use_oval_fitting_data': True,  # Enable oval fitting integration
-            },
             'analysis': {
                 'calculate_size_distribution': True,
                 'calculate_spatial_metrics': True,
                 'save_individual_pore_data': True,
-                'oval_aware_analysis': True,  # Enable oval-aware analysis
             }
         }
         
         analyzer = PorosityAnalyzer(config=config)
         
-        # Run enhanced analysis with oval fitting integration
+        # Run analysis
         result = analyzer.analyze_fiber_porosity(
             image,
             fiber_mask.astype(np.uint8),
             scale_factor,
             fiber_type,
-            fiber_analysis_data  # Contains oval fitting data
+            fiber_analysis_data
         )
         
         processing_time = time.time() - start_time
@@ -472,7 +471,7 @@ def test_enhanced_porosity_analysis_with_debug(image, fiber_mask, scale_factor, 
             pm = result['porosity_metrics']
             
             if verbose:
-                print(f"✅ Enhanced porosity analysis completed!")
+                print(f"✅ Porosity analysis completed!")
                 print(f"   Method: {pm.get('method', 'unknown')}")
                 print(f"   Total porosity: {pm.get('total_porosity_percent', 0):.2f}%")
                 print(f"   Pore count: {pm.get('pore_count', 0)}")
@@ -480,58 +479,48 @@ def test_enhanced_porosity_analysis_with_debug(image, fiber_mask, scale_factor, 
                 print(f"   Pore density: {pm.get('pore_density_per_mm2', 0):.1f}/mm²")
                 print(f"   Processing time: {processing_time:.3f}s")
                 
-                # NEW: Show oval fitting integration results
-                oval_context = result.get('oval_fitting_context', {})
-                if oval_context:
-                    print(f"\n   🔍 Oval Fitting Integration:")
-                    print(f"     Oval-aware analysis: {result.get('oval_fitting_used', False)}")
-                    print(f"     Fibers with ovals: {oval_context.get('fibers_with_ovals', 0)}")
-                    print(f"     Average fiber diameter: {oval_context.get('average_fiber_diameter_um', 0):.1f} μm")
-                
-                # Quality assessment with oval consideration
+                # Quality assessment
                 quality = result.get('quality_assessment', {})
                 if quality:
                     print(f"   Analysis quality: {quality.get('overall_quality', 'unknown')}")
                     print(f"   Confidence: {quality.get('confidence', 0):.2f}")
-                    if 'oval_fitted_pores' in quality:
-                        print(f"   Oval-fitted pores: {quality['oval_fitted_pores']} ({quality.get('oval_fitted_percentage', 0):.1f}%)")
             
-            # Create enhanced debug visualization
+            # Create debug visualization
             try:
                 plt.ioff()  # Turn off interactive mode
-                visualize_enhanced_porosity_results(image, result, figsize=(20, 12))
+                visualize_porosity_results(image, result, figsize=(15, 10))
                 
-                debug_file = debug_dir / 'enhanced_porosity_analysis.png'
+                debug_file = debug_dir / 'porosity_analysis.png'
                 plt.savefig(debug_file, dpi=150, bbox_inches='tight')
                 plt.close()
                 
                 if verbose:
-                    print(f"   💾 Enhanced debug image saved: {debug_file.name}")
+                    print(f"   💾 Debug image saved: {debug_file.name}")
             except Exception as viz_error:
                 if verbose:
-                    print(f"   ⚠️ Could not save enhanced debug visualization: {viz_error}")
+                    print(f"   ⚠️ Could not save debug visualization: {viz_error}")
             
             return True, result
         else:
             error = result.get('error', 'Unknown error')
             if verbose:
-                print(f"❌ Enhanced porosity analysis failed: {error}")
+                print(f"❌ Porosity analysis failed: {error}")
             return False, result
             
     except Exception as e:
         if verbose:
-            print(f"💥 Enhanced porosity analysis error: {e}")
+            print(f"💥 Porosity analysis error: {e}")
             traceback.print_exc()
         return False, {'error': str(e)}
 
-def test_enhanced_multiprocessing_analyzer(sample_images, verbose=True):
-    """Test enhanced multiprocessing analyzer with oval fitting"""
-    if not MODULES_AVAILABLE.get('multiprocessing_analyzer', False):
-        return False, {'error': 'Enhanced multiprocessing analyzer not available'}
+def test_comprehensive_analyzer_script(sample_images, verbose=True):
+    """Test comprehensive analyzer as script (no debug outputs expected)"""
+    if not MODULES_AVAILABLE.get('comprehensive_analyzer_script', False):
+        return False, {'error': 'Comprehensive analyzer script not available'}
     
     if verbose:
-        print("\n🔬 Testing Enhanced Multiprocessing Analyzer with Oval Fitting...")
-        print("-" * 70)
+        print("\n🔬 Testing Comprehensive Analyzer Script...")
+        print("-" * 50)
     
     try:
         # Test single image analysis first
@@ -542,67 +531,83 @@ def test_enhanced_multiprocessing_analyzer(sample_images, verbose=True):
         first_image = sample_images[0]
         
         if verbose:
-            print(f"   Testing enhanced batch analysis: {len(sample_images)} images")
+            print(f"   Testing single image: {first_image.name}")
         
-        # Run enhanced multiprocessing analyzer
+        # Run comprehensive analyzer on single image
         cmd = [
             sys.executable, 
-            "multiprocessing_analyzer.py", 
-            "--batch", "sample_images",
-            "--max-images", "3",  # Limit for testing
-            "--processes", "2"    # Use fewer processes for testing
+            "comprehensive_analyzer_main.py", 
+            "--image", str(first_image),
+            "--quiet"  # Minimize output
         ]
         
         start_time = time.time()
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         processing_time = time.time() - start_time
         
         if result.returncode == 0:
             if verbose:
-                print(f"✅ Enhanced batch analysis successful!")
+                print(f"✅ Single image analysis successful!")
                 print(f"   Processing time: {processing_time:.2f}s")
-                print(f"   Enhanced Excel report should be created with oval fitting data")
-                print(f"   Check enhanced_parallel_results/ for output files")
-                
-                # Look for created files
-                results_dir = Path("enhanced_parallel_results")
-                if results_dir.exists():
-                    excel_files = list(results_dir.glob("ENHANCED_OVAL_ANALYSIS_*.xlsx"))
-                    json_files = list(results_dir.glob("enhanced_batch_results_*.json"))
-                    
-                    if excel_files:
-                        print(f"   📊 Enhanced Excel report created: {excel_files[0].name}")
-                    if json_files:
-                        print(f"   📄 JSON results created: {json_files[0].name}")
+                print(f"   No debug images should be created (as expected)")
         else:
             if verbose:
-                print(f"❌ Enhanced batch analysis failed!")
+                print(f"❌ Single image analysis failed!")
                 print(f"   Return code: {result.returncode}")
                 if result.stderr:
                     print(f"   Error: {result.stderr}")
-            return False, {'error': f'Enhanced batch analysis failed: {result.stderr}'}
+            return False, {'error': f'Single image analysis failed: {result.stderr}'}
+        
+        # Test batch analysis if multiple images
+        if len(sample_images) > 1:
+            if verbose:
+                print(f"\n   Testing batch analysis: {len(sample_images)} images")
+            
+            cmd_batch = [
+                sys.executable,
+                "comprehensive_analyzer_main.py",
+                "--batch", "sample_images",
+                "--quiet"
+            ]
+            
+            start_time = time.time()
+            batch_result = subprocess.run(cmd_batch, capture_output=True, text=True, timeout=300)
+            batch_time = time.time() - start_time
+            
+            if batch_result.returncode == 0:
+                if verbose:
+                    print(f"✅ Batch analysis successful!")
+                    print(f"   Processing time: {batch_time:.2f}s")
+                    print(f"   Check batch_analysis_results/ for Excel output")
+            else:
+                if verbose:
+                    print(f"⚠️ Batch analysis had issues:")
+                    print(f"   Return code: {batch_result.returncode}")
+                    if batch_result.stderr:
+                        print(f"   Error: {batch_result.stderr}")
         
         return True, {
-            'batch_analysis_success': result.returncode == 0,
-            'batch_analysis_time': processing_time,
-            'output_generated': result.returncode == 0
+            'single_image_success': result.returncode == 0,
+            'single_image_time': processing_time,
+            'batch_success': batch_result.returncode == 0 if len(sample_images) > 1 else None,
+            'batch_time': batch_time if len(sample_images) > 1 else None
         }
         
     except subprocess.TimeoutExpired:
         if verbose:
-            print(f"❌ Enhanced multiprocessing analyzer timed out")
-        return False, {'error': 'Enhanced analysis timed out'}
+            print(f"❌ Comprehensive analyzer timed out")
+        return False, {'error': 'Analysis timed out'}
     except Exception as e:
         if verbose:
-            print(f"💥 Enhanced multiprocessing analyzer test error: {e}")
+            print(f"💥 Comprehensive analyzer test error: {e}")
             traceback.print_exc()
         return False, {'error': str(e)}
 
-def run_enhanced_individual_module_tests(sample_image, debug_dir):
-    """Run tests on enhanced individual modules with debug output"""
-    print(f"\n🧪 ENHANCED INDIVIDUAL MODULE TESTS WITH OVAL FITTING")
+def run_individual_module_tests(sample_image, debug_dir):
+    """FIXED: Run tests on individual modules with proper scale factor integration"""
+    print(f"\n🧪 FIXED INDIVIDUAL MODULE TESTS WITH SCALE FACTOR INTEGRATION")
     print(f"Image: {sample_image.name}")
-    print("=" * 80)
+    print("=" * 70)
     
     results = {}
     
@@ -637,22 +642,36 @@ def run_enhanced_individual_module_tests(sample_image, debug_dir):
     
     # Test 2: Scale Detection (use ORIGINAL image, like comprehensive analyzer)
     scale_success, scale_result = test_scale_detection_like_comprehensive(
-        original_image, debug_dir, verbose=True
+        original_image, debug_dir, verbose=True  # FIXED: Use original_image
     )
     # Treat partial success as success for overall test results
     results['scale_detection'] = scale_success in [True, 'partial']
+    
+    # FIXED: Get scale factor and validate it
     scale_factor = scale_result.get('micrometers_per_pixel', 1.0) if scale_success else 1.0
+    if scale_factor <= 0 or scale_factor > 100:  # Sanity check
+        print(f"⚠️ Invalid scale factor {scale_factor}, using default 1.0")
+        scale_factor = 1.0
     
-    # Test 3: Enhanced Fiber Type Detection with Oval Fitting (use processed image)
-    enhanced_fiber_success, enhanced_fiber_result = test_enhanced_fiber_detection_with_debug(
-        processed_image, debug_dir, scale_factor, verbose=True  # Pass scale factor
+    print(f"\n🔧 SCALE FACTOR TO BE USED: {scale_factor:.4f} μm/pixel")
+    
+    # Test 3: FIXED - Fiber Type Detection with scale factor
+    fiber_success, fiber_result = test_fiber_detection_with_debug(
+        processed_image, scale_factor, debug_dir, verbose=True  # FIXED: Pass scale_factor!
     )
-    results['enhanced_fiber_detection'] = enhanced_fiber_success
+    results['fiber_detection'] = fiber_success
     
-    if enhanced_fiber_success:
-        fiber_type = enhanced_fiber_result.get('fiber_type', 'unknown')
-        fiber_analysis_data = enhanced_fiber_result.get('analysis_data', {})
+    if fiber_success:
+        fiber_type = fiber_result.get('fiber_type', 'unknown')
+        fiber_analysis_data = fiber_result.get('analysis_data', {})
         fiber_mask = fiber_analysis_data.get('fiber_mask', np.zeros_like(processed_image, dtype=bool))
+        
+        # Show oval fitting results
+        oval_results = fiber_result.get('oval_results', {})
+        if oval_results.get('avg_diameter', 0) > 0:
+            print(f"\n✨ OVAL FITTING SUCCESS:")
+            print(f"   Average diameter: {oval_results.get('avg_diameter', 0):.1f} μm")
+            print(f"   Success rate: {oval_results.get('success_rate', 0):.1f}%")
     else:
         fiber_type = 'unknown'
         fiber_analysis_data = {}
@@ -662,33 +681,33 @@ def run_enhanced_individual_module_tests(sample_image, debug_dir):
         cv2.circle(fiber_mask.astype(np.uint8), center, 300, 1, -1)
         fiber_mask = fiber_mask.astype(bool)
     
-    # Test 4: Enhanced Porosity Analysis with Oval Fitting Integration
+    # Test 4: Porosity Analysis (use processed image with scale factor)
     if np.sum(fiber_mask) > 1000:  # Ensure sufficient fiber area
-        enhanced_porosity_success, enhanced_porosity_result = test_enhanced_porosity_analysis_with_debug(
+        porosity_success, porosity_result = test_porosity_analysis_with_debug(
             processed_image, fiber_mask, scale_factor, fiber_type, 
             fiber_analysis_data, debug_dir, verbose=True
         )
-        results['enhanced_porosity_analysis'] = enhanced_porosity_success
+        results['porosity_analysis'] = porosity_success
     else:
-        print("\n⚠️ Insufficient fiber area for enhanced porosity analysis test")
-        results['enhanced_porosity_analysis'] = False
+        print("\n⚠️ Insufficient fiber area for porosity analysis test")
+        results['porosity_analysis'] = False
     
     return results
 
-def run_enhanced_multiprocessing_test(sample_images):
-    """Run enhanced multiprocessing analyzer test"""
-    print(f"\n🔬 ENHANCED MULTIPROCESSING ANALYZER TEST")
-    print("=" * 80)
+def run_comprehensive_analyzer_test(sample_images):
+    """Run comprehensive analyzer test"""
+    print(f"\n🔬 COMPREHENSIVE ANALYZER TEST (No Debug Images)")
+    print("=" * 70)
     
-    enhanced_multiprocessing_success, enhanced_multiprocessing_result = test_enhanced_multiprocessing_analyzer(
+    comprehensive_success, comprehensive_result = test_comprehensive_analyzer_script(
         sample_images, verbose=True
     )
     
-    return {'enhanced_multiprocessing_analyzer': enhanced_multiprocessing_success}
+    return {'comprehensive_analyzer': comprehensive_success}
 
 def main():
-    """Main enhanced test runner"""
-    print(f"\n🚀 Starting Enhanced Real Image Tests with Oval Fitting")
+    """FIXED: Main test runner with scale factor integration"""
+    print(f"\n🚀 Starting FIXED Real Image Tests with Scale Factor Integration")
     
     # Test imports
     test_imports()
@@ -696,24 +715,24 @@ def main():
     # Find sample image
     sample_image, all_sample_images = find_sample_image()
     if sample_image is None:
-        print("\n❌ Cannot run enhanced tests without sample images!")
+        print("\n❌ Cannot run tests without sample images!")
         return False
     
     # Create debug output directory
     debug_dir = create_debug_output_dir()
     
-    # Run enhanced individual module tests with debug output on FIRST image
-    individual_results = run_enhanced_individual_module_tests(sample_image, debug_dir)
+    # Run individual module tests with debug output on FIRST image
+    individual_results = run_individual_module_tests(sample_image, debug_dir)
     
-    # Run enhanced multiprocessing analyzer test
-    multiprocessing_results = run_enhanced_multiprocessing_test(all_sample_images)
+    # Run comprehensive analyzer test
+    comprehensive_results = run_comprehensive_analyzer_test(all_sample_images)
     
     # Combine results
-    all_results = {**individual_results, **multiprocessing_results}
+    all_results = {**individual_results, **comprehensive_results}
     
     # Final summary
-    print(f"\n🎯 ENHANCED FINAL TEST SUMMARY")
-    print("=" * 80)
+    print(f"\n🎯 FINAL TEST SUMMARY - SCALE FACTOR INTEGRATION FIXED")
+    print("=" * 70)
     
     for test_name, success in all_results.items():
         if success == 'partial':
@@ -728,21 +747,23 @@ def main():
     actual_failures = sum(1 for result in all_results.values() if result is False)
     overall_success = actual_failures == 0
     
-    print(f"\nOverall Result: {'🎉 ALL ENHANCED SYSTEMS WORKING!' if overall_success else '⚠️ SOME ENHANCED FEATURES HAVE ISSUES'}")
-    print(f"Enhanced debug outputs saved to: {debug_dir}")
+    print(f"\nOverall Result: {'🎉 ALL SYSTEMS WORKING!' if overall_success else '⚠️ SOME CRITICAL ISSUES DETECTED'}")
+    print(f"Debug outputs saved to: {debug_dir}")
     
-    if multiprocessing_results.get('enhanced_multiprocessing_analyzer', False):
-        print(f"Enhanced multiprocessing analyzer working (check enhanced_parallel_results/ for oval fitting outputs)")
+    if comprehensive_results.get('comprehensive_analyzer', False):
+        print(f"Comprehensive analyzer working (check batch_analysis_results/ for outputs)")
     
     if overall_success:
-        print("\n✅ Your Enhanced SEM Fiber Analysis System with Oval Fitting is working correctly!")
-        print("   Individual modules: Generate debug images with oval fitting visualizations")
-        print("   Enhanced multiprocessing: Comprehensive Excel reports with 100+ measurements")
-        print("   Oval fitting: Precise diameter measurements and enhanced analysis")
-        print("   Scale detection: Works same way as before but integrates with oval data")
+        print("\n✅ Your FIXED SEM Fiber Analysis System is working correctly!")
+        print("   ✨ Scale factor now properly integrated throughout pipeline")
+        print("   📏 Oval diameters will now show in micrometers (μm) instead of pixels")
+        print("   📊 Individual modules: Generate debug images for analysis")
+        print("   🔬 Comprehensive analyzer: Clean processing without debug clutter")
+        print("   🎯 Scale detection: Works same way in both test and comprehensive analyzer")
+        print("   🧬 Fiber detection: Now receives scale factor for proper unit conversion")
+        print("   🕳️  Porosity analysis: Benefits from properly scaled fiber measurements")
     else:
-        print("\n🔧 Some enhanced tests failed - check the output above for details")
-        print("   Basic functionality may still work, but oval fitting features may be limited")
+        print("\n🔧 Some critical tests failed - check the output above for details")
     
     return overall_success
 

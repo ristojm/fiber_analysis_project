@@ -245,9 +245,13 @@ class PorosityAnalyzer:
                 # NEW: Add oval fitting context to pore data
                 if fiber_props.get('oval_fitted', False):
                     pore['fiber_oval_fitted'] = True
-                    pore['fiber_oval_diameter_um'] = fiber_props.get('oval_mean_diameter', 0) * scale_factor
-                    pore['fiber_oval_major_diameter_um'] = fiber_props.get('oval_major_diameter', 0) * scale_factor
-                    pore['fiber_oval_minor_diameter_um'] = fiber_props.get('oval_minor_diameter', 0) * scale_factor
+                    # Use micrometers measurements if available, fall back to pixels * scale_factor
+                    pore['fiber_oval_diameter_um'] = fiber_props.get('oval_mean_diameter_um', 
+                                                                   fiber_props.get('oval_mean_diameter', 0) * scale_factor)
+                    pore['fiber_oval_major_diameter_um'] = fiber_props.get('oval_major_diameter_um',
+                                                                         fiber_props.get('oval_major_diameter', 0) * scale_factor)
+                    pore['fiber_oval_minor_diameter_um'] = fiber_props.get('oval_minor_diameter_um',
+                                                                         fiber_props.get('oval_minor_diameter', 0) * scale_factor)
                     pore['fiber_oval_eccentricity'] = fiber_props.get('oval_eccentricity', 0)
                     pore['fiber_oval_fit_quality'] = fiber_props.get('oval_fit_quality', 0)
                     
