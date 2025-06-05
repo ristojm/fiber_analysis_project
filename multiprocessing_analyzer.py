@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Clean Multi-Processing Comprehensive SEM Fiber Analyzer
-Built from scratch with comprehensive pore and fiber analysis
+Enhanced Multi-Processing Comprehensive SEM Fiber Analyzer
+UPDATED: Added comprehensive oval fitting analysis for fiber diameter measurements
 
 Features:
 - Parallel batch processing with multiprocessing
+- Enhanced fiber diameter measurements via oval fitting
 - Detailed pore analysis (size distribution, shape, spatial)
 - Comprehensive fiber measurements (diameter, wall thickness, lumen)
 - Real-time progress tracking
-- Comprehensive Excel reporting with 80+ measurements
+- Comprehensive Excel reporting with 100+ measurements including oval fitting data
 - Memory-efficient processing
 """
 
@@ -48,8 +49,7 @@ except ImportError as e:
 
 def process_single_image_worker(image_info: Dict) -> Dict:
     """
-    Worker function for processing a single image in a separate process.
-    Designed to be pickle-able for multiprocessing.
+    Enhanced worker function for processing a single image with oval fitting analysis.
     """
     image_path = image_info['image_path']
     config = image_info.get('config', {})
@@ -93,16 +93,17 @@ def process_single_image_worker(image_info: Dict) -> Dict:
         scale_factor = scale_result['micrometers_per_pixel'] if scale_result['scale_detected'] else 1.0
         result['scale_detection'] = scale_result
         
-        # Step 3: Fiber type detection
+        # Step 3: Enhanced fiber type detection with oval fitting
         fiber_detector = FiberTypeDetector()
-        fiber_type, fiber_confidence, fiber_analysis_data = fiber_detector.classify_fiber_type(preprocessed)
+        fiber_type, fiber_confidence, fiber_analysis_data = fiber_detector.classify_fiber_type(preprocessed, scale_factor)
         
         result['fiber_detection'] = {
             'fiber_type': fiber_type,
             'confidence': fiber_confidence,
             'total_fibers': fiber_analysis_data.get('total_fibers', 0),
             'hollow_fibers': fiber_analysis_data.get('hollow_fibers', 0),
-            'filaments': fiber_analysis_data.get('filaments', 0)
+            'filaments': fiber_analysis_data.get('filaments', 0),
+            'oval_fitting_summary': fiber_analysis_data.get('oval_fitting_summary', {})
         }
         
         # Step 4: Porosity analysis
@@ -131,8 +132,8 @@ def process_single_image_worker(image_info: Dict) -> Dict:
         else:
             result['porosity_analysis'] = {'error': 'Insufficient fiber area'}
         
-        # Step 5: Extract detailed measurements
-        detailed_analysis = extract_detailed_measurements(
+        # Step 5: Extract enhanced detailed measurements including oval fitting
+        detailed_analysis = extract_enhanced_detailed_measurements(
             result.get('porosity_analysis', {}),
             fiber_analysis_data,
             scale_factor
@@ -140,8 +141,8 @@ def process_single_image_worker(image_info: Dict) -> Dict:
         
         result['detailed_measurements'] = detailed_analysis
         
-        # Step 6: Calculate quality metrics
-        quality_metrics = calculate_quality_metrics(result, scale_factor)
+        # Step 6: Calculate enhanced quality metrics
+        quality_metrics = calculate_enhanced_quality_metrics(result, scale_factor)
         result['quality_metrics'] = quality_metrics
         
         # Final memory check
@@ -168,13 +169,16 @@ def _preprocess_for_analysis(image: np.ndarray) -> np.ndarray:
     enhanced = clahe.apply(denoised)
     return enhanced
 
-def extract_detailed_measurements(porosity_result: Dict, fiber_analysis_data: Dict, scale_factor: float) -> Dict:
-    """Extract comprehensive pore and fiber measurements."""
+def extract_enhanced_detailed_measurements(porosity_result: Dict, fiber_analysis_data: Dict, scale_factor: float) -> Dict:
+    """
+    Extract comprehensive measurements including oval fitting data.
+    """
     
     measurements = {
         'pore_analysis': {},
         'fiber_analysis': {},
-        'lumen_analysis': {}
+        'lumen_analysis': {},
+        'oval_fitting_analysis': {}  # NEW: Dedicated oval fitting section
     }
     
     # === PORE ANALYSIS ===
@@ -225,7 +229,6 @@ def extract_detailed_measurements(porosity_result: Dict, fiber_analysis_data: Di
                 try:
                     centroids = np.array([[pore.get('centroid_x', 0), pore.get('centroid_y', 0)] for pore in pores])
                     if len(centroids) > 1:
-                        # Calculate nearest neighbor distances (simplified)
                         distances = []
                         for i, cent1 in enumerate(centroids):
                             min_dist = float('inf')
@@ -245,18 +248,32 @@ def extract_detailed_measurements(porosity_result: Dict, fiber_analysis_data: Di
                 except:
                     pass
     
-    # === FIBER ANALYSIS ===
+    # === ENHANCED FIBER ANALYSIS WITH OVAL FITTING ===
     if fiber_analysis_data and 'individual_results' in fiber_analysis_data:
         individual_results = fiber_analysis_data['individual_results']
         
         if individual_results:
-            # Extract fiber measurements
+            # Extract traditional fiber measurements
             fiber_areas_um2 = []
             fiber_diameters_um = []
             fiber_circularities = []
             fiber_aspect_ratios = []
             lumen_diameters_um = []
             wall_thicknesses_um = []
+            
+            # NEW: Extract oval fitting measurements
+            oval_fitted_count = 0
+            oval_mean_diameters = []
+            oval_major_diameters = []
+            oval_minor_diameters = []
+            oval_eccentricities = []
+            oval_fit_qualities = []
+            oval_areas = []
+            
+            lumen_oval_fitted_count = 0
+            lumen_oval_diameters = []
+            lumen_oval_eccentricities = []
+            lumen_oval_qualities = []
             
             for result in individual_results:
                 fiber_props = result.get('fiber_properties', {})
@@ -270,8 +287,18 @@ def extract_detailed_measurements(porosity_result: Dict, fiber_analysis_data: Di
                     fiber_diameters_um.append(diameter_um)
                     fiber_circularities.append(fiber_props.get('circularity', 0))
                     fiber_aspect_ratios.append(fiber_props.get('aspect_ratio', 1))
+                    
+                    # NEW: Extract oval fitting data for fibers
+                    if fiber_props.get('oval_fitted', False):
+                        oval_fitted_count += 1
+                        oval_mean_diameters.append(fiber_props.get('oval_mean_diameter', 0) * scale_factor)
+                        oval_major_diameters.append(fiber_props.get('oval_major_diameter', 0) * scale_factor)
+                        oval_minor_diameters.append(fiber_props.get('oval_minor_diameter', 0) * scale_factor)
+                        oval_eccentricities.append(fiber_props.get('oval_eccentricity', 0))
+                        oval_fit_qualities.append(fiber_props.get('oval_fit_quality', 0))
+                        oval_areas.append(fiber_props.get('oval_area', 0) * (scale_factor ** 2))
                 
-                # Lumen measurements
+                # Enhanced lumen measurements with oval fitting
                 if result.get('has_lumen', False):
                     lumen_props = result.get('lumen_properties', {})
                     lumen_area_pixels = lumen_props.get('area', 0)
@@ -281,10 +308,25 @@ def extract_detailed_measurements(porosity_result: Dict, fiber_analysis_data: Di
                         lumen_diameter_um = 2 * np.sqrt(lumen_area_um2 / np.pi)
                         lumen_diameters_um.append(lumen_diameter_um)
                         
-                        # Calculate wall thickness
+                        # NEW: Extract lumen oval fitting data
+                        if lumen_props.get('oval_fitted', False):
+                            lumen_oval_fitted_count += 1
+                            lumen_oval_diameters.append(lumen_props.get('oval_mean_diameter', 0) * scale_factor)
+                            lumen_oval_eccentricities.append(lumen_props.get('oval_eccentricity', 0))
+                            lumen_oval_qualities.append(lumen_props.get('oval_fit_quality', 0))
+                        
+                        # Calculate wall thickness (enhanced with oval fitting if available)
                         if area_pixels > 0:
-                            fiber_radius_um = diameter_um / 2
-                            lumen_radius_um = lumen_diameter_um / 2
+                            if (fiber_props.get('oval_fitted', False) and 
+                                lumen_props.get('oval_fitted', False)):
+                                # Use oval fitting for more accurate wall thickness
+                                fiber_radius_um = fiber_props.get('oval_mean_diameter', 0) * scale_factor / 2
+                                lumen_radius_um = lumen_props.get('oval_mean_diameter', 0) * scale_factor / 2
+                            else:
+                                # Fallback to circular approximation
+                                fiber_radius_um = diameter_um / 2
+                                lumen_radius_um = lumen_diameter_um / 2
+                            
                             wall_thickness = fiber_radius_um - lumen_radius_um
                             if wall_thickness > 0:
                                 wall_thicknesses_um.append(wall_thickness)
@@ -314,7 +356,52 @@ def extract_detailed_measurements(porosity_result: Dict, fiber_analysis_data: Di
                 **fiber_categories
             }
             
-            # Lumen analysis
+            # NEW: Dedicated oval fitting analysis
+            measurements['oval_fitting_analysis'] = {
+                'fibers_total_analyzed': len(individual_results),
+                'fibers_successfully_fitted': oval_fitted_count,
+                'fiber_oval_success_rate': oval_fitted_count / len(individual_results) if individual_results else 0,
+                'lumens_total_analyzed': len([r for r in individual_results if r.get('has_lumen', False)]),
+                'lumens_successfully_fitted': lumen_oval_fitted_count,
+                'lumen_oval_success_rate': lumen_oval_fitted_count / len([r for r in individual_results if r.get('has_lumen', False)]) if len([r for r in individual_results if r.get('has_lumen', False)]) > 0 else 0,
+            }
+            
+            # Fiber oval fitting statistics
+            if oval_mean_diameters:
+                measurements['oval_fitting_analysis'].update({
+                    'fiber_oval_mean_diameter_um': np.mean(oval_mean_diameters),
+                    'fiber_oval_median_diameter_um': np.median(oval_mean_diameters),
+                    'fiber_oval_std_diameter_um': np.std(oval_mean_diameters),
+                    'fiber_oval_min_diameter_um': np.min(oval_mean_diameters),
+                    'fiber_oval_max_diameter_um': np.max(oval_mean_diameters),
+                    'fiber_oval_major_mean_um': np.mean(oval_major_diameters),
+                    'fiber_oval_minor_mean_um': np.mean(oval_minor_diameters),
+                    'fiber_oval_mean_eccentricity': np.mean(oval_eccentricities),
+                    'fiber_oval_mean_fit_quality': np.mean(oval_fit_qualities),
+                    'fiber_oval_mean_area_um2': np.mean(oval_areas),
+                    'fiber_oval_diameter_cv': np.std(oval_mean_diameters) / np.mean(oval_mean_diameters) if np.mean(oval_mean_diameters) > 0 else 0,
+                })
+                
+                # Oval-based fiber size categories
+                oval_categories = {
+                    'oval_ultra_fine_fibers': len([d for d in oval_mean_diameters if d < 10]),
+                    'oval_fine_fibers': len([d for d in oval_mean_diameters if 10 <= d < 50]),
+                    'oval_medium_fibers': len([d for d in oval_mean_diameters if 50 <= d < 100]),
+                    'oval_coarse_fibers': len([d for d in oval_mean_diameters if 100 <= d < 200]),
+                    'oval_very_coarse_fibers': len([d for d in oval_mean_diameters if d >= 200])
+                }
+                measurements['oval_fitting_analysis'].update(oval_categories)
+            
+            # Lumen oval fitting statistics
+            if lumen_oval_diameters:
+                measurements['oval_fitting_analysis'].update({
+                    'lumen_oval_mean_diameter_um': np.mean(lumen_oval_diameters),
+                    'lumen_oval_std_diameter_um': np.std(lumen_oval_diameters),
+                    'lumen_oval_mean_eccentricity': np.mean(lumen_oval_eccentricities),
+                    'lumen_oval_mean_fit_quality': np.mean(lumen_oval_qualities),
+                })
+            
+            # Enhanced lumen analysis
             if lumen_diameters_um:
                 measurements['lumen_analysis'] = {
                     'has_lumen_data': True,
@@ -323,33 +410,45 @@ def extract_detailed_measurements(porosity_result: Dict, fiber_analysis_data: Di
                     'std_lumen_diameter_um': np.std(lumen_diameters_um),
                     'mean_wall_thickness_um': np.mean(wall_thicknesses_um) if wall_thicknesses_um else 0,
                     'median_wall_thickness_um': np.median(wall_thicknesses_um) if wall_thicknesses_um else 0,
-                    'lumen_count': len(lumen_diameters_um)
+                    'std_wall_thickness_um': np.std(wall_thicknesses_um) if wall_thicknesses_um else 0,
+                    'lumen_count': len(lumen_diameters_um),
+                    # NEW: Wall thickness to fiber diameter ratios
+                    'mean_wall_to_fiber_ratio': np.mean([wt / fd for wt, fd in zip(wall_thicknesses_um, fiber_diameters_um) if fd > 0]) if wall_thicknesses_um and fiber_diameters_um else 0,
+                    'mean_lumen_to_fiber_ratio': np.mean([ld / fd for ld, fd in zip(lumen_diameters_um, fiber_diameters_um) if fd > 0]) if lumen_diameters_um and fiber_diameters_um else 0,
                 }
             else:
                 measurements['lumen_analysis'] = {'has_lumen_data': False}
     
     return measurements
 
-def calculate_quality_metrics(result: Dict, scale_factor: float) -> Dict:
-    """Calculate overall analysis quality metrics."""
+def calculate_enhanced_quality_metrics(result: Dict, scale_factor: float) -> Dict:
+    """Calculate enhanced quality metrics including oval fitting assessment."""
     
     quality_score = 0.0
     quality_factors = []
     
-    # Scale detection quality (25%)
+    # Scale detection quality (20%)
     scale_result = result.get('scale_detection', {})
     if scale_result.get('scale_detected', False):
         scale_conf = scale_result.get('confidence', 0.0)
-        quality_score += scale_conf * 0.25
+        quality_score += scale_conf * 0.20
         quality_factors.append(f"Scale: {scale_conf:.2f}")
     else:
         quality_factors.append("Scale: failed")
     
-    # Fiber detection quality (35%)
+    # Fiber detection quality (25%)
     fiber_result = result.get('fiber_detection', {})
     fiber_conf = fiber_result.get('confidence', 0.0)
-    quality_score += fiber_conf * 0.35
+    quality_score += fiber_conf * 0.25
     quality_factors.append(f"Fiber: {fiber_conf:.2f}")
+    
+    # NEW: Oval fitting quality (15%)
+    oval_summary = fiber_result.get('oval_fitting_summary', {})
+    oval_success_rate = oval_summary.get('fiber_fit_success_rate', 0.0)
+    oval_quality = oval_summary.get('fiber_avg_fit_quality', 0.0)
+    oval_combined = (oval_success_rate + oval_quality) / 2
+    quality_score += oval_combined * 0.15
+    quality_factors.append(f"Oval Fitting: {oval_combined:.2f}")
     
     # Porosity analysis quality (40%)
     porosity_result = result.get('porosity_analysis', {})
@@ -370,7 +469,7 @@ def calculate_quality_metrics(result: Dict, scale_factor: float) -> Dict:
         else:
             porosity_quality = 0.0
         
-        quality_score += porosity_quality * 0.4
+        quality_score += porosity_quality * 0.40
         quality_factors.append(f"Porosity: {porosity_quality:.2f}")
     else:
         quality_factors.append("Porosity: unavailable")
@@ -390,31 +489,35 @@ def calculate_quality_metrics(result: Dict, scale_factor: float) -> Dict:
     return {
         'overall_quality': quality_level,
         'quality_score': quality_score,
-        'quality_factors': quality_factors
+        'quality_factors': quality_factors,
+        'oval_fitting_quality': oval_combined,
+        'oval_success_rate': oval_success_rate,
+        'oval_fit_quality': oval_quality
     }
 
 class MultiProcessingFiberAnalyzer:
-    """Multi-processing SEM fiber analyzer with comprehensive measurements."""
+    """Enhanced multi-processing SEM fiber analyzer with oval fitting capabilities."""
     
     def __init__(self, num_processes: Optional[int] = None):
-        """Initialize the multi-processing analyzer."""
+        """Initialize the enhanced multi-processing analyzer."""
         
         if num_processes is None:
             self.num_processes = max(1, mp.cpu_count() - 1)
         else:
             self.num_processes = max(1, min(num_processes, mp.cpu_count()))
         
-        print(f"🚀 Multi-Processing Analyzer initialized")
+        print(f"🚀 Enhanced Multi-Processing Analyzer initialized")
         print(f"   CPU cores available: {mp.cpu_count()}")
         print(f"   Processes to use: {self.num_processes}")
+        print(f"   Features: Oval fitting, enhanced measurements")
     
     def analyze_batch_parallel(self, image_directory: str, 
                               output_dir: Optional[str] = None,
                               max_images: Optional[int] = None) -> Dict:
-        """Perform parallel batch analysis."""
+        """Perform parallel batch analysis with oval fitting."""
         
-        print(f"\n🚀 PARALLEL BATCH ANALYSIS")
-        print("=" * 60)
+        print(f"\n🚀 PARALLEL BATCH ANALYSIS WITH OVAL FITTING")
+        print("=" * 70)
         
         # Setup directories
         image_dir = Path(image_directory)
@@ -422,7 +525,7 @@ class MultiProcessingFiberAnalyzer:
             return {'error': f'Directory not found: {image_dir}'}
         
         if output_dir is None:
-            output_dir = image_dir.parent / 'parallel_results'
+            output_dir = image_dir.parent / 'enhanced_parallel_results'
         else:
             output_dir = Path(output_dir)
         
@@ -446,6 +549,7 @@ class MultiProcessingFiberAnalyzer:
         
         print(f"📁 Processing {len(image_files)} images")
         print(f"🔧 Using {self.num_processes} processes")
+        print(f"📊 Enhanced with oval fitting analysis")
         
         # Prepare worker arguments
         worker_args = [{'image_path': str(img_path), 'config': {}} for img_path in image_files]
@@ -476,8 +580,14 @@ class MultiProcessingFiberAnalyzer:
                     if result['success']:
                         successful += 1
                         status = "✅"
+                        
+                        # Show oval fitting info
+                        oval_summary = result.get('fiber_detection', {}).get('oval_fitting_summary', {})
+                        oval_rate = oval_summary.get('fiber_fit_success_rate', 0)
+                        oval_info = f"Oval: {oval_rate:.1%}"
                     else:
                         status = "❌"
+                        oval_info = "Oval: N/A"
                     
                     # Progress update
                     progress = completed / len(image_files) * 100
@@ -487,6 +597,7 @@ class MultiProcessingFiberAnalyzer:
                     print(f"{status} [{completed:3d}/{len(image_files)}] {progress:5.1f}% | "
                           f"{Path(image_path).name:<25} | "
                           f"Time: {result.get('total_processing_time', 0):5.2f}s | "
+                          f"{oval_info} | "
                           f"ETA: {eta:5.0f}s")
                     
                 except Exception as e:
@@ -500,7 +611,7 @@ class MultiProcessingFiberAnalyzer:
         
         total_time = time.time() - start_time
         
-        # Generate summary
+        # Generate enhanced summary
         summary = {
             'batch_info': {
                 'timestamp': datetime.now().isoformat(),
@@ -512,36 +623,124 @@ class MultiProcessingFiberAnalyzer:
                 'total_processing_time': total_time,
                 'average_time_per_image': total_time / len(image_files) if image_files else 0,
                 'num_processes_used': self.num_processes,
-                'images_per_second': len(image_files) / total_time if total_time > 0 else 0
+                'images_per_second': len(image_files) / total_time if total_time > 0 else 0,
+                'analysis_features': ['oval_fitting', 'enhanced_measurements', 'diameter_analysis']
             },
             'individual_results': results
         }
+        
+        # Calculate oval fitting batch statistics
+        oval_stats = self._calculate_batch_oval_statistics(results)
+        summary['batch_oval_statistics'] = oval_stats
         
         # Save results
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
         # JSON results
-        json_path = output_dir / f'batch_results_{timestamp}.json'
+        json_path = output_dir / f'enhanced_batch_results_{timestamp}.json'
         with open(json_path, 'w') as f:
             json.dump(self._prepare_for_json(summary), f, indent=2, default=str)
         
-        # Excel report
+        # Enhanced Excel report
         try:
-            excel_path = output_dir / f'COMPREHENSIVE_ANALYSIS_{timestamp}.xlsx'
-            self._create_excel_report(summary, excel_path)
-            print(f"\n📊 EXCEL REPORT: {excel_path.name}")
+            excel_path = output_dir / f'ENHANCED_OVAL_ANALYSIS_{timestamp}.xlsx'
+            self._create_enhanced_excel_report(summary, excel_path)
+            print(f"\n📊 ENHANCED EXCEL REPORT: {excel_path.name}")
         except Exception as e:
-            print(f"⚠️ Could not create Excel report: {e}")
+            print(f"⚠️ Could not create enhanced Excel report: {e}")
         
         # Performance summary
-        print(f"\n🎯 ANALYSIS COMPLETE!")
-        print("=" * 40)
+        print(f"\n🎯 ENHANCED ANALYSIS COMPLETE!")
+        print("=" * 50)
         print(f"📊 Success Rate: {successful}/{len(image_files)} ({successful/len(image_files)*100:.1f}%)")
         print(f"⏱️  Total Time: {total_time:.2f} seconds")
         print(f"🚀 Processes: {self.num_processes}")
         print(f"⚡ Speed: {len(image_files)/total_time:.2f} images/sec")
+        print(f"🔍 Oval Fitting: {oval_stats.get('overall_success_rate', 0):.1%} success rate")
+        print(f"📏 Avg Diameter: {oval_stats.get('avg_fiber_diameter_um', 0):.1f} μm")
         
         return summary
+    
+    def _calculate_batch_oval_statistics(self, results: List[Dict]) -> Dict:
+        """Calculate batch-level oval fitting statistics."""
+        
+        successful_results = [r for r in results if r.get('success', False)]
+        
+        if not successful_results:
+            return {'error': 'No successful analyses for oval statistics'}
+        
+        # Collect oval fitting data across all samples
+        total_fibers = 0
+        total_fitted_fibers = 0
+        total_lumens = 0
+        total_fitted_lumens = 0
+        all_fiber_diameters = []
+        all_lumen_diameters = []
+        all_fit_qualities = []
+        all_eccentricities = []
+        
+        for result in successful_results:
+            detailed = result.get('detailed_measurements', {})
+            oval_analysis = detailed.get('oval_fitting_analysis', {})
+            
+            total_fibers += oval_analysis.get('fibers_total_analyzed', 0)
+            total_fitted_fibers += oval_analysis.get('fibers_successfully_fitted', 0)
+            total_lumens += oval_analysis.get('lumens_total_analyzed', 0)
+            total_fitted_lumens += oval_analysis.get('lumens_successfully_fitted', 0)
+            
+            # Collect diameter data (if available)
+            if oval_analysis.get('fiber_oval_mean_diameter_um', 0) > 0:
+                all_fiber_diameters.append(oval_analysis['fiber_oval_mean_diameter_um'])
+            
+            if oval_analysis.get('lumen_oval_mean_diameter_um', 0) > 0:
+                all_lumen_diameters.append(oval_analysis['lumen_oval_mean_diameter_um'])
+            
+            if oval_analysis.get('fiber_oval_mean_fit_quality', 0) > 0:
+                all_fit_qualities.append(oval_analysis['fiber_oval_mean_fit_quality'])
+            
+            if oval_analysis.get('fiber_oval_mean_eccentricity', 0) >= 0:
+                all_eccentricities.append(oval_analysis['fiber_oval_mean_eccentricity'])
+        
+        stats = {
+            'total_samples_analyzed': len(successful_results),
+            'total_fibers_analyzed': total_fibers,
+            'total_fibers_fitted': total_fitted_fibers,
+            'overall_success_rate': total_fitted_fibers / total_fibers if total_fibers > 0 else 0,
+            'total_lumens_analyzed': total_lumens,
+            'total_lumens_fitted': total_fitted_lumens,
+            'lumen_fitting_success_rate': total_fitted_lumens / total_lumens if total_lumens > 0 else 0,
+        }
+        
+        # Diameter statistics
+        if all_fiber_diameters:
+            stats.update({
+                'avg_fiber_diameter_um': np.mean(all_fiber_diameters),
+                'std_fiber_diameter_um': np.std(all_fiber_diameters),
+                'min_fiber_diameter_um': np.min(all_fiber_diameters),
+                'max_fiber_diameter_um': np.max(all_fiber_diameters),
+                'median_fiber_diameter_um': np.median(all_fiber_diameters),
+            })
+        
+        if all_lumen_diameters:
+            stats.update({
+                'avg_lumen_diameter_um': np.mean(all_lumen_diameters),
+                'std_lumen_diameter_um': np.std(all_lumen_diameters),
+            })
+        
+        # Quality statistics
+        if all_fit_qualities:
+            stats.update({
+                'avg_fit_quality': np.mean(all_fit_qualities),
+                'std_fit_quality': np.std(all_fit_qualities),
+            })
+        
+        if all_eccentricities:
+            stats.update({
+                'avg_eccentricity': np.mean(all_eccentricities),
+                'std_eccentricity': np.std(all_eccentricities),
+            })
+        
+        return stats
     
     def _prepare_for_json(self, obj):
         """Prepare object for JSON serialization."""
@@ -558,20 +757,27 @@ class MultiProcessingFiberAnalyzer:
         else:
             return obj
     
-    def _create_excel_report(self, batch_summary: Dict, excel_path: Path):
-        """Create comprehensive Excel report with detailed measurements."""
+    def _create_enhanced_excel_report(self, batch_summary: Dict, excel_path: Path):
+        """
+        Create enhanced Excel report with comprehensive oval fitting data.
+        """
         
         results = batch_summary['individual_results']
         batch_info = batch_summary['batch_info']
+        oval_stats = batch_summary.get('batch_oval_statistics', {})
         
         with pd.ExcelWriter(excel_path, engine='openpyxl') as writer:
             
-            # Overview sheet
+            # 1. ENHANCED OVERVIEW SHEET
             overview_data = {
                 'Metric': [
                     'Analysis Date', 'Total Images', 'Successful', 'Success Rate (%)',
                     'Total Time (s)', 'Avg Time/Image (s)', 'Images/Second',
-                    'Processes Used', 'Input Directory'
+                    'Processes Used', 'Analysis Features',
+                    # NEW: Oval fitting overview
+                    'Total Fibers Analyzed', 'Fibers Successfully Fitted', 'Oval Fitting Success Rate (%)',
+                    'Total Lumens Analyzed', 'Lumens Successfully Fitted', 'Lumen Fitting Success Rate (%)',
+                    'Avg Fiber Diameter (μm)', 'Avg Lumen Diameter (μm)', 'Avg Fit Quality'
                 ],
                 'Value': [
                     batch_info['timestamp'][:19].replace('T', ' '),
@@ -582,13 +788,23 @@ class MultiProcessingFiberAnalyzer:
                     f"{batch_info['average_time_per_image']:.2f}",
                     f"{batch_info['images_per_second']:.2f}",
                     batch_info['num_processes_used'],
-                    batch_info['input_directory']
+                    ', '.join(batch_info.get('analysis_features', [])),
+                    # NEW: Oval fitting data
+                    oval_stats.get('total_fibers_analyzed', 0),
+                    oval_stats.get('total_fibers_fitted', 0),
+                    f"{oval_stats.get('overall_success_rate', 0)*100:.1f}%",
+                    oval_stats.get('total_lumens_analyzed', 0),
+                    oval_stats.get('total_lumens_fitted', 0),
+                    f"{oval_stats.get('lumen_fitting_success_rate', 0)*100:.1f}%",
+                    f"{oval_stats.get('avg_fiber_diameter_um', 0):.2f}",
+                    f"{oval_stats.get('avg_lumen_diameter_um', 0):.2f}",
+                    f"{oval_stats.get('avg_fit_quality', 0):.3f}"
                 ]
             }
             overview_df = pd.DataFrame(overview_data)
-            overview_df.to_excel(writer, sheet_name='Overview', index=False)
+            overview_df.to_excel(writer, sheet_name='Enhanced_Overview', index=False)
             
-            # Comprehensive results
+            # 2. COMPREHENSIVE RESULTS WITH OVAL FITTING
             comprehensive_results = []
             for result in results:
                 if result.get('success', False):
@@ -634,10 +850,11 @@ class MultiProcessingFiberAnalyzer:
                     quality_data = result.get('quality_metrics', {})
                     row.update({
                         'Analysis_Quality': quality_data.get('overall_quality', 'unknown'),
-                        'Quality_Score': quality_data.get('quality_score', 0)
+                        'Quality_Score': quality_data.get('quality_score', 0),
+                        'Oval_Fitting_Quality': quality_data.get('oval_fitting_quality', 0)
                     })
                     
-                    # Detailed measurements
+                    # NEW: Enhanced measurements with oval fitting
                     detailed = result.get('detailed_measurements', {})
                     
                     # Pore details
@@ -645,39 +862,61 @@ class MultiProcessingFiberAnalyzer:
                     row.update({
                         'Pore_Mean_Diameter_um': pore_analysis.get('mean_diameter_um', 0),
                         'Pore_Std_Diameter_um': pore_analysis.get('std_diameter_um', 0),
-                        'Pore_Min_Diameter_um': pore_analysis.get('min_diameter_um', 0),
-                        'Pore_Max_Diameter_um': pore_analysis.get('max_diameter_um', 0),
                         'Nano_Pores_Count': pore_analysis.get('nano_pores', 0),
                         'Micro_Pores_Count': pore_analysis.get('micro_pores', 0),
                         'Small_Pores_Count': pore_analysis.get('small_pores', 0),
                         'Medium_Pores_Count': pore_analysis.get('medium_pores', 0),
                         'Large_Pores_Count': pore_analysis.get('large_pores', 0),
                         'Macro_Pores_Count': pore_analysis.get('macro_pores', 0),
-                        'Pore_Mean_Circularity': pore_analysis.get('mean_circularity', 0),
-                        'Pore_Elongated_Count': pore_analysis.get('elongated_pores', 0),
-                        'Pore_Round_Count': pore_analysis.get('round_pores', 0)
                     })
                     
-                    # Fiber details
+                    # Traditional fiber details
                     fiber_analysis = detailed.get('fiber_analysis', {})
                     row.update({
-                        'Fiber_Mean_Diameter_um': fiber_analysis.get('mean_diameter_um', 0),
-                        'Fiber_Std_Diameter_um': fiber_analysis.get('std_diameter_um', 0),
-                        'Fiber_Min_Diameter_um': fiber_analysis.get('min_diameter_um', 0),
-                        'Fiber_Max_Diameter_um': fiber_analysis.get('max_diameter_um', 0),
-                        'Fiber_Diameter_CV': fiber_analysis.get('diameter_cv', 0),
+                        'Traditional_Fiber_Mean_Diameter_um': fiber_analysis.get('mean_diameter_um', 0),
+                        'Traditional_Fiber_Std_Diameter_um': fiber_analysis.get('std_diameter_um', 0),
                         'Fiber_Mean_Area_um2': fiber_analysis.get('mean_area_um2', 0),
                         'Fiber_Total_Area_um2': fiber_analysis.get('total_area_um2', 0),
-                        'Ultra_Fine_Fibers': fiber_analysis.get('ultra_fine_fibers', 0),
-                        'Fine_Fibers': fiber_analysis.get('fine_fibers', 0),
-                        'Medium_Fibers': fiber_analysis.get('medium_fibers', 0),
-                        'Coarse_Fibers': fiber_analysis.get('coarse_fibers', 0),
-                        'Very_Coarse_Fibers': fiber_analysis.get('very_coarse_fibers', 0),
                         'Fiber_Mean_Circularity': fiber_analysis.get('mean_circularity', 0),
-                        'Fiber_Elongated_Count': fiber_analysis.get('elongated_fibers', 0)
+                        'Fiber_Elongated_Count': fiber_analysis.get('elongated_fibers', 0),
                     })
                     
-                    # Lumen details
+                    # NEW: Oval fitting details
+                    oval_analysis = detailed.get('oval_fitting_analysis', {})
+                    row.update({
+                        'Oval_Fibers_Analyzed': oval_analysis.get('fibers_total_analyzed', 0),
+                        'Oval_Fibers_Successfully_Fitted': oval_analysis.get('fibers_successfully_fitted', 0),
+                        'Oval_Fiber_Success_Rate': oval_analysis.get('fiber_oval_success_rate', 0),
+                        'Oval_Fiber_Mean_Diameter_um': oval_analysis.get('fiber_oval_mean_diameter_um', 0),
+                        'Oval_Fiber_Median_Diameter_um': oval_analysis.get('fiber_oval_median_diameter_um', 0),
+                        'Oval_Fiber_Std_Diameter_um': oval_analysis.get('fiber_oval_std_diameter_um', 0),
+                        'Oval_Fiber_Min_Diameter_um': oval_analysis.get('fiber_oval_min_diameter_um', 0),
+                        'Oval_Fiber_Max_Diameter_um': oval_analysis.get('fiber_oval_max_diameter_um', 0),
+                        'Oval_Fiber_Major_Mean_um': oval_analysis.get('fiber_oval_major_mean_um', 0),
+                        'Oval_Fiber_Minor_Mean_um': oval_analysis.get('fiber_oval_minor_mean_um', 0),
+                        'Oval_Fiber_Mean_Eccentricity': oval_analysis.get('fiber_oval_mean_eccentricity', 0),
+                        'Oval_Fiber_Mean_Fit_Quality': oval_analysis.get('fiber_oval_mean_fit_quality', 0),
+                        'Oval_Fiber_Mean_Area_um2': oval_analysis.get('fiber_oval_mean_area_um2', 0),
+                        'Oval_Fiber_Diameter_CV': oval_analysis.get('fiber_oval_diameter_cv', 0),
+                        
+                        # Oval-based size categories
+                        'Oval_Ultra_Fine_Fibers': oval_analysis.get('oval_ultra_fine_fibers', 0),
+                        'Oval_Fine_Fibers': oval_analysis.get('oval_fine_fibers', 0),
+                        'Oval_Medium_Fibers': oval_analysis.get('oval_medium_fibers', 0),
+                        'Oval_Coarse_Fibers': oval_analysis.get('oval_coarse_fibers', 0),
+                        'Oval_Very_Coarse_Fibers': oval_analysis.get('oval_very_coarse_fibers', 0),
+                        
+                        # Lumen oval fitting
+                        'Oval_Lumens_Analyzed': oval_analysis.get('lumens_total_analyzed', 0),
+                        'Oval_Lumens_Successfully_Fitted': oval_analysis.get('lumens_successfully_fitted', 0),
+                        'Oval_Lumen_Success_Rate': oval_analysis.get('lumen_oval_success_rate', 0),
+                        'Oval_Lumen_Mean_Diameter_um': oval_analysis.get('lumen_oval_mean_diameter_um', 0),
+                        'Oval_Lumen_Std_Diameter_um': oval_analysis.get('lumen_oval_std_diameter_um', 0),
+                        'Oval_Lumen_Mean_Eccentricity': oval_analysis.get('lumen_oval_mean_eccentricity', 0),
+                        'Oval_Lumen_Mean_Fit_Quality': oval_analysis.get('lumen_oval_mean_fit_quality', 0),
+                    })
+                    
+                    # Enhanced lumen details
                     lumen_analysis = detailed.get('lumen_analysis', {})
                     row.update({
                         'Has_Lumen_Data': lumen_analysis.get('has_lumen_data', False),
@@ -685,7 +924,10 @@ class MultiProcessingFiberAnalyzer:
                         'Lumen_Std_Diameter_um': lumen_analysis.get('std_lumen_diameter_um', 0),
                         'Wall_Mean_Thickness_um': lumen_analysis.get('mean_wall_thickness_um', 0),
                         'Wall_Median_Thickness_um': lumen_analysis.get('median_wall_thickness_um', 0),
-                        'Lumen_Count': lumen_analysis.get('lumen_count', 0)
+                        'Wall_Std_Thickness_um': lumen_analysis.get('std_wall_thickness_um', 0),
+                        'Wall_to_Fiber_Ratio': lumen_analysis.get('mean_wall_to_fiber_ratio', 0),
+                        'Lumen_to_Fiber_Ratio': lumen_analysis.get('mean_lumen_to_fiber_ratio', 0),
+                        'Lumen_Count': lumen_analysis.get('lumen_count', 0),
                     })
                     
                 else:
@@ -699,33 +941,85 @@ class MultiProcessingFiberAnalyzer:
                 
                 comprehensive_results.append(row)
             
-            # Save main results
+            # Save comprehensive results
             main_df = pd.DataFrame(comprehensive_results)
             main_df.to_excel(writer, sheet_name='Comprehensive_Results', index=False)
             
-            # Performance analysis
-            successful_results = [r for r in results if r.get('success', False)]
-            if successful_results:
-                perf_data = []
-                for result in successful_results:
-                    perf_data.append({
+            # 3. OVAL FITTING DEDICATED SHEET
+            oval_details = []
+            for result in results:
+                if result.get('success', False):
+                    detailed = result.get('detailed_measurements', {})
+                    oval_analysis = detailed.get('oval_fitting_analysis', {})
+                    
+                    oval_details.append({
                         'Image_Name': result['image_name'],
-                        'Processing_Time_s': result.get('total_processing_time', 0),
+                        'Fibers_Total_Analyzed': oval_analysis.get('fibers_total_analyzed', 0),
+                        'Fibers_Successfully_Fitted': oval_analysis.get('fibers_successfully_fitted', 0),
+                        'Fiber_Success_Rate': oval_analysis.get('fiber_oval_success_rate', 0),
+                        'Fiber_Mean_Diameter_um': oval_analysis.get('fiber_oval_mean_diameter_um', 0),
+                        'Fiber_Std_Diameter_um': oval_analysis.get('fiber_oval_std_diameter_um', 0),
+                        'Fiber_Major_Mean_um': oval_analysis.get('fiber_oval_major_mean_um', 0),
+                        'Fiber_Minor_Mean_um': oval_analysis.get('fiber_oval_minor_mean_um', 0),
+                        'Fiber_Mean_Eccentricity': oval_analysis.get('fiber_oval_mean_eccentricity', 0),
+                        'Fiber_Mean_Fit_Quality': oval_analysis.get('fiber_oval_mean_fit_quality', 0),
+                        'Lumens_Total_Analyzed': oval_analysis.get('lumens_total_analyzed', 0),
+                        'Lumens_Successfully_Fitted': oval_analysis.get('lumens_successfully_fitted', 0),
+                        'Lumen_Success_Rate': oval_analysis.get('lumen_oval_success_rate', 0),
+                        'Lumen_Mean_Diameter_um': oval_analysis.get('lumen_oval_mean_diameter_um', 0),
+                        'Lumen_Mean_Eccentricity': oval_analysis.get('lumen_oval_mean_eccentricity', 0),
+                        'Lumen_Mean_Fit_Quality': oval_analysis.get('lumen_oval_mean_fit_quality', 0),
+                    })
+            
+            oval_df = pd.DataFrame(oval_details)
+            oval_df.to_excel(writer, sheet_name='Oval_Fitting_Details', index=False)
+            
+            # 4. BATCH OVAL STATISTICS SHEET
+            if oval_stats and 'error' not in oval_stats:
+                batch_oval_data = []
+                for key, value in oval_stats.items():
+                    if isinstance(value, (int, float)):
+                        batch_oval_data.append({
+                            'Statistic': key.replace('_', ' ').title(),
+                            'Value': value
+                        })
+                
+                batch_oval_df = pd.DataFrame(batch_oval_data)
+                batch_oval_df.to_excel(writer, sheet_name='Batch_Oval_Statistics', index=False)
+            
+            # 5. PERFORMANCE ANALYSIS
+            performance_data = []
+            for result in results:
+                if result.get('success', False):
+                    quality_data = result.get('quality_metrics', {})
+                    performance_data.append({
+                        'Image_Name': result['image_name'],
+                        'Total_Time_s': result.get('total_processing_time', 0),
                         'Memory_Usage_MB': result.get('memory_usage_mb', 0),
                         'Process_ID': result.get('process_id', 0),
-                        'Image_Size_MB': result.get('image_size_mb', 0)
+                        'Image_Size_MB': result.get('image_size_mb', 0),
+                        'Overall_Quality_Score': quality_data.get('quality_score', 0),
+                        'Oval_Fitting_Quality': quality_data.get('oval_fitting_quality', 0),
+                        'Oval_Success_Rate': quality_data.get('oval_success_rate', 0),
                     })
-                
-                perf_df = pd.DataFrame(perf_data)
-                perf_df.to_excel(writer, sheet_name='Performance', index=False)
+            
+            performance_df = pd.DataFrame(performance_data)
+            performance_df.to_excel(writer, sheet_name='Performance_Analysis', index=False)
         
-        print(f"📊 Excel report created with {len(results)} results")
+        print(f"📊 Enhanced Excel report created with {len(results)} results and oval fitting analysis")
 
 def main():
-    """Main function with command line interface."""
+    """Main function with enhanced command line interface."""
     
     parser = argparse.ArgumentParser(
-        description='Multi-Processing SEM Fiber Analysis with Comprehensive Measurements'
+        description='Enhanced Multi-Processing SEM Fiber Analysis with Oval Fitting',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python multiprocessing_analyzer.py --batch sample_images/
+  python multiprocessing_analyzer.py --batch sample_images/ --output enhanced_results/
+  python multiprocessing_analyzer.py --batch sample_images/ --processes 4 --max-images 10
+        """
     )
     
     parser.add_argument('--batch', '-b', required=True, help='Directory with images to analyze')
@@ -746,7 +1040,7 @@ def main():
             print(f"❌ Invalid processes value: {args.processes}")
             return
     
-    # Initialize analyzer
+    # Initialize enhanced analyzer
     analyzer = MultiProcessingFiberAnalyzer(num_processes=num_processes)
     
     # Run analysis
@@ -762,7 +1056,9 @@ def main():
     )
     
     if 'error' not in summary:
-        print(f"\n🎉 Batch analysis completed successfully!")
+        print(f"\n🎉 Enhanced batch analysis completed successfully!")
+        print(f"📁 Results saved to: {summary['batch_info']['output_directory']}")
+        print(f"📊 Excel report includes oval fitting data for all samples")
 
 if __name__ == "__main__":
     mp.freeze_support()  # Required for Windows
