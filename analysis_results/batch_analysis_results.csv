@@ -1,5 +1,0 @@
-image_name,image_path,fiber_type,confidence,total_fibers,hollow_fibers,filaments,scale_detected,micrometers_per_pixel,scale_value,scale_unit,analysis_success,error_message
-hollow_fiber_sample.jpg,sample_images\hollow_fiber_sample.jpg,filament,0.8429282612238538,1,0,1,True,287.037037037037,15.5,millimeter,True,
-solid_filament_sample.jpg,sample_images\solid_filament_sample.jpg,error,0.0,0,0,0,False,0.0,,,False,'NoneType' object has no attribute 'get'
-hollow_fiber_sample.jpg,sample_images\hollow_fiber_sample.jpg,filament,0.8429282612238538,1,0,1,True,287.037037037037,15.5,millimeter,True,
-solid_filament_sample.jpg,sample_images\solid_filament_sample.jpg,error,0.0,0,0,0,False,0.0,,,False,'NoneType' object has no attribute 'get'
