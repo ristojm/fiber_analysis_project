@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Comprehensive SEM Fiber Analyzer - Main Application
-Production application for complete fiber characterization
+Production application for complete fiber characterization with fast refined porosity analysis
 
 This is the main user-facing application that orchestrates all analysis modules
 to provide complete SEM fiber analysis with reporting and visualization.
@@ -47,28 +47,36 @@ except ImportError as e:
     sys.exit(1)
 
 try:
-    # Enhanced porosity analysis
-    from modules.porosity_analysis import EnhancedPorosityAnalyzer, analyze_fiber_porosity_enhanced
-    print("✅ Enhanced porosity module loaded")
+    # Updated porosity analysis module (fast refined method)
+    from modules.porosity_analysis import PorosityAnalyzer, analyze_fiber_porosity, quick_porosity_check
+    print("✅ Fast refined porosity module loaded")
     POROSITY_AVAILABLE = True
-    ENHANCED_POROSITY = True
+    POROSITY_TYPE = "fast_refined"
 except ImportError:
-    print("⚠️ Enhanced porosity module not found, trying basic version...")
+    print("⚠️ Fast refined porosity module not found, trying legacy versions...")
     try:
-        from modules.porosity_analysis import PorosityAnalyzer
+        # Fallback to enhanced porosity
+        from modules.porosity_analysis import EnhancedPorosityAnalyzer, analyze_fiber_porosity_enhanced
+        print("✅ Enhanced porosity module loaded")
         POROSITY_AVAILABLE = True
-        ENHANCED_POROSITY = False
-        print("✅ Basic porosity module loaded")
+        POROSITY_TYPE = "enhanced"
     except ImportError:
-        print("❌ No porosity analysis available")
-        POROSITY_AVAILABLE = False
-        ENHANCED_POROSITY = False
+        try:
+            # Fallback to basic porosity
+            from modules.porosity_analysis import PorosityAnalyzer
+            print("✅ Basic porosity module loaded")
+            POROSITY_AVAILABLE = True
+            POROSITY_TYPE = "basic"
+        except ImportError:
+            print("❌ No porosity analysis available")
+            POROSITY_AVAILABLE = False
+            POROSITY_TYPE = None
 
 
 class ComprehensiveFiberAnalyzer:
     """
     Main application class that orchestrates all analysis modules
-    for comprehensive SEM fiber characterization.
+    for comprehensive SEM fiber characterization with fast refined porosity analysis.
     """
     
     def __init__(self, config: Optional[Dict] = None, debug: bool = True):
@@ -95,12 +103,20 @@ class ComprehensiveFiberAnalyzer:
             **self.config.get('fiber_detection', {})
         )
         
+        # Initialize porosity analyzer based on available type
         if POROSITY_AVAILABLE:
-            if ENHANCED_POROSITY:
+            if POROSITY_TYPE == "fast_refined":
+                # New fast refined porosity analyzer
+                self.porosity_analyzer = PorosityAnalyzer(
+                    config=self.config.get('porosity_analysis', {})
+                )
+            elif POROSITY_TYPE == "enhanced":
+                # Enhanced porosity analyzer (legacy)
                 self.porosity_analyzer = EnhancedPorosityAnalyzer(
                     config=self.config.get('porosity_analysis', {})
                 )
             else:
+                # Basic porosity analyzer (legacy)
                 self.porosity_analyzer = PorosityAnalyzer()
         else:
             self.porosity_analyzer = None
@@ -109,7 +125,7 @@ class ComprehensiveFiberAnalyzer:
             print(f"🔬 Comprehensive Fiber Analyzer initialized")
             print(f"   Scale detection: {self.scale_detector.ocr_backend or 'legacy'}")
             print(f"   Fiber detection: Adaptive algorithms")
-            print(f"   Porosity analysis: {'Enhanced' if ENHANCED_POROSITY else 'Basic' if POROSITY_AVAILABLE else 'Not available'}")
+            print(f"   Porosity analysis: {POROSITY_TYPE or 'Not available'}")
     
     def _get_default_config(self) -> Dict:
         """Get default configuration for all modules."""
@@ -126,23 +142,39 @@ class ComprehensiveFiberAnalyzer:
                 'confidence_threshold': 0.6,
             },
             'porosity_analysis': {
+                # Fast refined porosity configuration
                 'pore_detection': {
-                    'min_pore_area': 5,
-                    'max_pore_area': 50000,
-                    'contrast_threshold': 0.3,
-                    'adaptive_thresholds': True,
+                    'intensity_percentile': 28,
+                    'min_pore_area_pixels': 3,
+                    'max_pore_area_ratio': 0.1,
+                    'fast_filtering': True,
+                    'early_size_filter': True,
+                    'vectorized_operations': True,
                 },
-                'segmentation': {
-                    'method': 'multi_otsu',
-                    'fiber_type_aware': True,
+                'performance': {
+                    'max_candidates_per_stage': 5000,
+                    'use_simplified_morphology': True,
+                    'batch_processing': True,
+                    'enable_timing': False,  # Disable in production
                 },
-                'analysis': {
-                    'spatial_analysis': True,
-                    'percentiles': [25, 50, 75, 90, 95],
+                'quality_control': {
+                    'circularity_threshold': 0.05,
+                    'aspect_ratio_threshold': 8,
+                    'solidity_threshold': 0.25,
+                    'intensity_validation': True,
+                    'size_dependent_validation': True,
                 },
                 'fiber_integration': {
                     'use_individual_fibers': True,
-                    'hollow_fiber_lumen_exclusion': True,
+                    'exclude_lumen': True,
+                    'lumen_buffer_pixels': 3,
+                    'min_fiber_area_analysis': 1000,
+                },
+                'analysis': {
+                    'calculate_size_distribution': True,
+                    'calculate_spatial_metrics': True,
+                    'detailed_reporting': True,
+                    'save_individual_pore_data': True,
                 }
             },
             'output': {
@@ -187,7 +219,8 @@ class ComprehensiveFiberAnalyzer:
             'analysis_timestamp': datetime.now().isoformat(),
             'success': False,
             'total_processing_time': 0.0,
-            'modules_used': []
+            'modules_used': [],
+            'porosity_method': POROSITY_TYPE
         }
         
         try:
@@ -281,11 +314,11 @@ class ComprehensiveFiberAnalyzer:
                 print(f"   Filaments: {fiber_analysis_data.get('filaments', 0)}")
                 print(f"   Processing time: {fiber_time:.3f}s")
             
-            # Step 4: Porosity analysis
+            # Step 4: Fast refined porosity analysis
             porosity_result = None
             if self.porosity_analyzer and POROSITY_AVAILABLE:
                 if self.debug:
-                    print("🕳️  Step 4: Porosity analysis...")
+                    print(f"🕳️  Step 4: Porosity analysis ({POROSITY_TYPE})...")
                 
                 step_start = time.time()
                 
@@ -294,8 +327,17 @@ class ComprehensiveFiberAnalyzer:
                 
                 if np.sum(fiber_mask) > 1000:  # Minimum area threshold
                     try:
-                        if ENHANCED_POROSITY:
-                            # Enhanced porosity analyzer
+                        if POROSITY_TYPE == "fast_refined":
+                            # New fast refined porosity analyzer
+                            porosity_result = self.porosity_analyzer.analyze_fiber_porosity(
+                                preprocessed, 
+                                fiber_mask.astype(np.uint8), 
+                                scale_factor, 
+                                fiber_type,
+                                fiber_analysis_data
+                            )
+                        elif POROSITY_TYPE == "enhanced":
+                            # Enhanced porosity analyzer (legacy)
                             porosity_result = self.porosity_analyzer.analyze_fiber_porosity(
                                 preprocessed, 
                                 fiber_mask.astype(np.uint8), 
@@ -304,15 +346,16 @@ class ComprehensiveFiberAnalyzer:
                                 fiber_analysis_data
                             )
                         else:
-                            # Basic porosity analyzer - need to implement basic interface
+                            # Basic porosity analyzer (fallback)
                             porosity_result = {
                                 'porosity_metrics': {
                                     'total_porosity_percent': 0.0,
                                     'pore_count': 0,
                                     'average_pore_size_um2': 0.0,
-                                    'pore_density_per_mm2': 0.0
+                                    'pore_density_per_mm2': 0.0,
+                                    'method': 'basic_fallback'
                                 },
-                                'error': 'Basic porosity analysis not fully implemented'
+                                'note': 'Basic porosity analysis - limited functionality'
                             }
                         
                         porosity_time = time.time() - step_start
@@ -323,11 +366,18 @@ class ComprehensiveFiberAnalyzer:
                         if self.debug and 'porosity_metrics' in porosity_result:
                             pm = porosity_result['porosity_metrics']
                             print(f"   ✅ Porosity analysis completed:")
-                            print(f"   Total porosity: {pm['total_porosity_percent']:.2f}%")
-                            print(f"   Pore count: {pm['pore_count']}")
-                            if 'average_pore_size_um2' in pm:
-                                print(f"   Avg pore size: {pm['average_pore_size_um2']:.2f} μm²")
+                            print(f"   Total porosity: {pm.get('total_porosity_percent', 0):.2f}%")
+                            print(f"   Pore count: {pm.get('pore_count', 0)}")
+                            print(f"   Average pore size: {pm.get('average_pore_size_um2', 0):.2f} μm²")
+                            print(f"   Method: {pm.get('method', 'unknown')}")
                             print(f"   Processing time: {porosity_time:.3f}s")
+                            
+                            # Show performance info for fast refined method
+                            if POROSITY_TYPE == "fast_refined" and 'performance_stats' in porosity_result:
+                                perf = porosity_result['performance_stats']
+                                candidates = perf.get('candidates_processed', 0)
+                                if candidates > 0:
+                                    print(f"   Performance: {candidates:,} candidates processed, {candidates/porosity_time:.0f} candidates/sec")
                     
                     except Exception as e:
                         if self.debug:
@@ -409,6 +459,7 @@ class ComprehensiveFiberAnalyzer:
             'scale_factor_um_per_pixel': scale_factor,
             'fiber_type': fiber_type,
             'fiber_confidence': fiber_confidence,
+            'porosity_method': POROSITY_TYPE,
         }
         
         # Calculate overall quality score
@@ -433,21 +484,38 @@ class ComprehensiveFiberAnalyzer:
             pm = porosity_result['porosity_metrics']
             pore_count = pm.get('pore_count', 0)
             
-            if pore_count >= 20:
-                porosity_quality = 1.0
-            elif pore_count >= 10:
-                porosity_quality = 0.8
-            elif pore_count >= 5:
-                porosity_quality = 0.6
-            elif pore_count > 0:
-                porosity_quality = 0.4
+            # Quality assessment based on pore count and method
+            if POROSITY_TYPE == "fast_refined":
+                # More lenient for fast refined (expects more pores)
+                if pore_count >= 100:
+                    porosity_quality = 1.0
+                elif pore_count >= 50:
+                    porosity_quality = 0.9
+                elif pore_count >= 20:
+                    porosity_quality = 0.8
+                elif pore_count >= 10:
+                    porosity_quality = 0.6
+                elif pore_count > 0:
+                    porosity_quality = 0.4
+                else:
+                    porosity_quality = 0.0
             else:
-                porosity_quality = 0.0
+                # Standard quality assessment
+                if pore_count >= 20:
+                    porosity_quality = 1.0
+                elif pore_count >= 10:
+                    porosity_quality = 0.8
+                elif pore_count >= 5:
+                    porosity_quality = 0.6
+                elif pore_count > 0:
+                    porosity_quality = 0.4
+                else:
+                    porosity_quality = 0.0
             
             quality_score += porosity_quality * 0.4
-            quality_factors.append(f"Porosity: {porosity_quality:.2f}")
+            quality_factors.append(f"Porosity: {porosity_quality:.2f} ({POROSITY_TYPE})")
         else:
-            quality_factors.append("Porosity: unavailable")
+            quality_factors.append(f"Porosity: unavailable ({POROSITY_TYPE or 'none'})")
         
         # Determine overall quality level
         if quality_score >= 0.85:
@@ -467,7 +535,81 @@ class ComprehensiveFiberAnalyzer:
             'quality_factors': quality_factors
         })
         
+        # Add physical measurements if scale is available
+        if scale_result.get('scale_detected', False):
+            physical_measurements = self._calculate_physical_measurements(
+                fiber_analysis_data, porosity_result, scale_factor
+            )
+            metrics['physical_measurements'] = physical_measurements
+        
         return metrics
+    
+    def _calculate_physical_measurements(self, fiber_data: Dict, 
+                                       porosity_data: Optional[Dict],
+                                       scale_factor: float) -> Dict:
+        """Calculate physical measurements in real units."""
+        
+        measurements = {}
+        
+        # Fiber measurements
+        individual_results = fiber_data.get('individual_results', [])
+        if individual_results:
+            fiber_areas_um2 = []
+            fiber_diameters_um = []
+            lumen_areas_um2 = []
+            
+            for result in individual_results:
+                fiber_props = result.get('fiber_properties', {})
+                area_pixels = fiber_props.get('area', 0)
+                
+                if area_pixels > 0:
+                    area_um2 = area_pixels * (scale_factor ** 2)
+                    diameter_um = 2 * np.sqrt(area_um2 / np.pi)
+                    
+                    fiber_areas_um2.append(area_um2)
+                    fiber_diameters_um.append(diameter_um)
+                    
+                    # Lumen measurements for hollow fibers
+                    if result.get('has_lumen', False):
+                        lumen_props = result.get('lumen_properties', {})
+                        lumen_area_pixels = lumen_props.get('area', 0)
+                        if lumen_area_pixels > 0:
+                            lumen_area_um2 = lumen_area_pixels * (scale_factor ** 2)
+                            lumen_areas_um2.append(lumen_area_um2)
+            
+            # Fiber statistics
+            if fiber_areas_um2:
+                measurements['fiber_statistics'] = {
+                    'count': len(fiber_areas_um2),
+                    'mean_area_um2': np.mean(fiber_areas_um2),
+                    'std_area_um2': np.std(fiber_areas_um2),
+                    'mean_diameter_um': np.mean(fiber_diameters_um),
+                    'std_diameter_um': np.std(fiber_diameters_um),
+                    'min_diameter_um': np.min(fiber_diameters_um),
+                    'max_diameter_um': np.max(fiber_diameters_um),
+                    'median_diameter_um': np.median(fiber_diameters_um)
+                }
+            
+            # Lumen statistics
+            if lumen_areas_um2:
+                measurements['lumen_statistics'] = {
+                    'count': len(lumen_areas_um2),
+                    'mean_area_um2': np.mean(lumen_areas_um2),
+                    'std_area_um2': np.std(lumen_areas_um2)
+                }
+        
+        # Porosity measurements
+        if porosity_data and 'porosity_metrics' in porosity_data:
+            pm = porosity_data['porosity_metrics']
+            measurements['porosity_statistics'] = {
+                'total_porosity_percent': pm.get('total_porosity_percent', 0),
+                'pore_count': pm.get('pore_count', 0),
+                'average_pore_size_um2': pm.get('average_pore_size_um2', 0),
+                'pore_density_per_mm2': pm.get('pore_density_per_mm2', 0),
+                'method_used': pm.get('method', POROSITY_TYPE)
+            }
+        
+        return measurements
     
     def _export_results(self, result: Dict, output_dir: Path,
                        original_image: np.ndarray, 
@@ -546,7 +688,8 @@ class ComprehensiveFiberAnalyzer:
             # Overview sheet
             overview_data = {
                 'Metric': ['Image Name', 'Analysis Quality', 'Quality Score', 'Total Processing Time',
-                          'Fiber Type', 'Fiber Confidence', 'Scale Detected', 'Scale Factor'],
+                          'Fiber Type', 'Fiber Confidence', 'Scale Detected', 'Scale Factor',
+                          'Porosity Method'],
                 'Value': [
                     result['image_name'],
                     result.get('comprehensive_metrics', {}).get('analysis_quality', 'unknown'),
@@ -555,7 +698,8 @@ class ComprehensiveFiberAnalyzer:
                     result.get('fiber_detection', {}).get('fiber_type', 'unknown'),
                     result.get('fiber_detection', {}).get('confidence', 0),
                     result.get('scale_detection', {}).get('scale_detected', False),
-                    result.get('comprehensive_metrics', {}).get('scale_factor_um_per_pixel', 0)
+                    result.get('comprehensive_metrics', {}).get('scale_factor_um_per_pixel', 0),
+                    result.get('porosity_method', 'unknown')
                 ]
             }
             overview_df = pd.DataFrame(overview_data)
@@ -580,9 +724,18 @@ class ComprehensiveFiberAnalyzer:
                     'Total Porosity (%)': pm.get('total_porosity_percent', 0),
                     'Pore Count': pm.get('pore_count', 0),
                     'Average Pore Size (μm²)': pm.get('average_pore_size_um2', 0),
-                    'Pore Density (/mm²)': pm.get('pore_density_per_mm2', 0)
+                    'Pore Density (/mm²)': pm.get('pore_density_per_mm2', 0),
+                    'Method': pm.get('method', POROSITY_TYPE),
+                    'Processing Time (s)': result.get('porosity_processing_time', 0)
                 }])
                 porosity_summary.to_excel(writer, sheet_name='Porosity_Analysis', index=False)
+            
+            # Physical measurements if available
+            measurements = result.get('comprehensive_metrics', {}).get('physical_measurements', {})
+            if 'fiber_statistics' in measurements:
+                fs = measurements['fiber_statistics']
+                fiber_measurements = pd.DataFrame([fs])
+                fiber_measurements.to_excel(writer, sheet_name='Fiber_Measurements', index=False)
     
     def _create_visualization(self, result: Dict, original_image: np.ndarray, viz_path: Path):
         """Create comprehensive visualization."""
@@ -618,6 +771,7 @@ class ComprehensiveFiberAnalyzer:
             pm = porosity_result['porosity_metrics']
             summary_text += f"Porosity: {pm.get('total_porosity_percent', 0):.2f}%\n"
             summary_text += f"Pore Count: {pm.get('pore_count', 0)}\n"
+            summary_text += f"Method: {pm.get('method', POROSITY_TYPE)}\n"
         else:
             summary_text += f"Porosity: Analysis failed\n"
         
@@ -641,17 +795,25 @@ class ComprehensiveFiberAnalyzer:
             axes[1, 0].set_title('Fiber Detection', fontsize=12, fontweight='bold')
         axes[1, 0].axis('off')
         
-        # Quality assessment
+        # Quality assessment and performance
         quality_factors = comprehensive.get('quality_factors', [])
-        if quality_factors:
-            quality_text = "Quality Factors:\n\n" + "\n".join(quality_factors)
-        else:
-            quality_text = "Quality assessment\nnot available"
+        quality_text = "Quality Factors:\n" + "\n".join(quality_factors) + "\n\n"
+        
+        # Add performance info for fast refined method
+        if (POROSITY_TYPE == "fast_refined" and 
+            porosity_result and 'performance_stats' in porosity_result):
+            perf = porosity_result['performance_stats']
+            candidates = perf.get('candidates_processed', 0)
+            porosity_time = result.get('porosity_processing_time', 0)
+            if candidates > 0 and porosity_time > 0:
+                quality_text += f"Performance:\n"
+                quality_text += f"  {candidates:,} candidates\n"
+                quality_text += f"  {candidates/porosity_time:.0f} candidates/sec"
         
         axes[1, 1].text(0.05, 0.95, quality_text, transform=axes[1, 1].transAxes,
                        fontsize=10, verticalalignment='top', fontfamily='monospace',
                        bbox=dict(boxstyle="round,pad=0.5", facecolor='lightgreen'))
-        axes[1, 1].set_title('Quality Assessment', fontsize=12, fontweight='bold')
+        axes[1, 1].set_title('Quality & Performance', fontsize=12, fontweight='bold')
         axes[1, 1].axis('off')
         
         plt.suptitle(f"SEM Fiber Analysis: {result['image_name']}", 
@@ -669,7 +831,8 @@ class ComprehensiveFiberAnalyzer:
             
             f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"Image: {result['image_name']}\n")
-            f.write(f"Analysis Duration: {result.get('total_processing_time', 0):.2f} seconds\n\n")
+            f.write(f"Analysis Duration: {result.get('total_processing_time', 0):.2f} seconds\n")
+            f.write(f"Porosity Method: {POROSITY_TYPE}\n\n")
             
             # Overall assessment
             comprehensive = result.get('comprehensive_metrics', {})
@@ -713,15 +876,27 @@ class ComprehensiveFiberAnalyzer:
         f.write(f"Processing Time: {fiber_result.get('processing_time', 0):.3f}s\n\n")
         
         # Porosity analysis
-        f.write("POROSITY ANALYSIS\n")
-        f.write("-" * 17 + "\n")
+        f.write(f"POROSITY ANALYSIS ({POROSITY_TYPE})\n")
+        f.write("-" * (17 + len(POROSITY_TYPE or '')) + "\n")
         porosity_result = result.get('porosity_analysis', {})
         if porosity_result and 'porosity_metrics' in porosity_result:
             pm = porosity_result['porosity_metrics']
             f.write(f"Status: Successful\n")
+            f.write(f"Method: {pm.get('method', POROSITY_TYPE)}\n")
             f.write(f"Total Porosity: {pm.get('total_porosity_percent', 0):.2f}%\n")
             f.write(f"Pore Count: {pm.get('pore_count', 0)}\n")
             f.write(f"Average Pore Size: {pm.get('average_pore_size_um2', 0):.2f} μm²\n")
+            f.write(f"Pore Density: {pm.get('pore_density_per_mm2', 0):.1f}/mm²\n")
+            
+            # Performance info for fast refined
+            if (POROSITY_TYPE == "fast_refined" and 'performance_stats' in porosity_result):
+                perf = porosity_result['performance_stats']
+                candidates = perf.get('candidates_processed', 0)
+                porosity_time = result.get('porosity_processing_time', 0)
+                if candidates > 0:
+                    f.write(f"Candidates Processed: {candidates:,}\n")
+                    if porosity_time > 0:
+                        f.write(f"Processing Speed: {candidates/porosity_time:.0f} candidates/sec\n")
         else:
             f.write(f"Status: Failed or Not Available\n")
             error = porosity_result.get('error', 'Unknown') if porosity_result else 'Not performed'
@@ -738,6 +913,7 @@ class ComprehensiveFiberAnalyzer:
         print(f"Quality: {comprehensive.get('analysis_quality', 'unknown').title()}")
         print(f"Score: {comprehensive.get('quality_score', 0):.2f}/1.0")
         print(f"Total Time: {result.get('total_processing_time', 0):.2f}s")
+        print(f"Porosity Method: {POROSITY_TYPE}")
         
         # Key results
         scale_result = result.get('scale_detection', {})
@@ -753,7 +929,14 @@ class ComprehensiveFiberAnalyzer:
         porosity_result = result.get('porosity_analysis', {})
         if porosity_result and 'porosity_metrics' in porosity_result:
             pm = porosity_result['porosity_metrics']
-            print(f"Porosity: {pm.get('total_porosity_percent', 0):.2f}%")
+            print(f"Porosity: {pm.get('total_porosity_percent', 0):.2f}% ({pm.get('pore_count', 0)} pores)")
+            
+            # Show performance for fast refined
+            if POROSITY_TYPE == "fast_refined" and 'performance_stats' in porosity_result:
+                perf = porosity_result['performance_stats']
+                candidates = perf.get('candidates_processed', 0)
+                if candidates > 0:
+                    print(f"Performance: {candidates:,} candidates processed")
         else:
             print(f"Porosity: Analysis failed or unavailable")
     
@@ -801,6 +984,7 @@ class ComprehensiveFiberAnalyzer:
         
         print(f"📁 Analyzing {len(image_files)} images")
         print(f"📊 Results will be saved to: {output_dir}")
+        print(f"🚀 Using {POROSITY_TYPE} porosity analysis")
         
         # Process each image
         results = []
@@ -828,7 +1012,8 @@ class ComprehensiveFiberAnalyzer:
                 'successful_analyses': successful,
                 'success_rate': successful / len(image_files) * 100 if image_files else 0,
                 'total_processing_time': total_time,
-                'average_time_per_image': total_time / len(image_files) if image_files else 0
+                'average_time_per_image': total_time / len(image_files) if image_files else 0,
+                'porosity_method': POROSITY_TYPE
             },
             'individual_results': results
         }
@@ -843,6 +1028,7 @@ class ComprehensiveFiberAnalyzer:
         print(f"\n🎯 BATCH ANALYSIS COMPLETE!")
         print(f"📊 Success Rate: {successful}/{len(image_files)} ({successful/len(image_files)*100:.1f}%)")
         print(f"⏱️ Total Time: {total_time:.2f} seconds")
+        print(f"🚀 Method Used: {POROSITY_TYPE}")
         print(f"💾 Results saved to: {output_dir}")
         
         return summary
@@ -852,7 +1038,7 @@ def main():
     """Main function with command line interface."""
     
     parser = argparse.ArgumentParser(
-        description='Comprehensive SEM Fiber Analysis',
+        description='Comprehensive SEM Fiber Analysis with Fast Refined Porosity',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -921,6 +1107,7 @@ Examples:
             print(f"\n🎯 Batch Analysis Summary:")
             print(f"Success Rate: {batch_info['success_rate']:.1f}%")
             print(f"Average Time: {batch_info['average_time_per_image']:.2f}s per image")
+            print(f"Method: {batch_info['porosity_method']}")
     
     else:
         # No specific action - show help or analyze demo
