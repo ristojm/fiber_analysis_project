@@ -1,7 +1,7 @@
 """
-SEM Fiber Analysis System - FIXED Fiber Type Detection Module
-FIXED: Ensures proper fiber mask creation and storage in all scenarios
-UPDATED: Enhanced error handling and fallback mechanisms
+SEM Fiber Analysis System - Complete Fixed Fiber Type Detection Module
+FIXED: Adaptive thresholds, multiple segmentation methods, guaranteed fiber mask creation
+UPDATED: Enhanced error handling and fallback mechanisms for robust operation
 """
 
 import cv2
@@ -13,18 +13,25 @@ import matplotlib.pyplot as plt
 
 class FiberTypeDetector:
     """
-    FIXED: Fiber type detector that ALWAYS creates proper fiber masks.
-    Enhanced with multiple fallback mechanisms to ensure robust operation.
+    Complete fixed fiber type detector with adaptive thresholds and multiple fallback methods.
+    Guarantees fiber mask creation and robust operation across different SEM image conditions.
     """
     
     def __init__(self, 
-                 min_fiber_ratio: float = 0.001,      # Min fiber area as fraction of image
-                 max_fiber_ratio: float = 0.8,        # Max fiber area as fraction of image
+                 min_fiber_ratio: float = 0.001,      # CHANGED: Adaptive ratio instead of fixed area
+                 max_fiber_ratio: float = 0.8,        # NEW: Maximum fiber area ratio
                  lumen_area_threshold: float = 0.02,  # Minimum 2% lumen area
-                 circularity_threshold: float = 0.2,   # Relaxed circularity
-                 confidence_threshold: float = 0.6):   # Lower confidence threshold
+                 circularity_threshold: float = 0.1,  # RELAXED: More lenient circularity
+                 confidence_threshold: float = 0.6):  # Lower confidence threshold
         """
-        Initialize adaptive detector with ratio-based parameters.
+        Initialize fiber type detector with adaptive parameters optimized for various SEM images.
+        
+        Args:
+            min_fiber_ratio: Minimum fiber area as fraction of total image pixels
+            max_fiber_ratio: Maximum fiber area as fraction of total image pixels
+            lumen_area_threshold: Minimum lumen area ratio for hollow fiber classification
+            circularity_threshold: Minimum circularity for fiber validation (relaxed)
+            confidence_threshold: Minimum confidence for classification
         """
         self.min_fiber_ratio = min_fiber_ratio
         self.max_fiber_ratio = max_fiber_ratio
@@ -33,24 +40,29 @@ class FiberTypeDetector:
         self.confidence_threshold = confidence_threshold
         
     def calculate_adaptive_thresholds(self, image: np.ndarray) -> Dict:
-        """Calculate adaptive thresholds based on image characteristics."""
+        """
+        Calculate adaptive thresholds based on image characteristics.
+        
+        Args:
+            image: Input image
+            
+        Returns:
+            Dictionary of adaptive thresholds
+        """
         height, width = image.shape[:2]
         total_pixels = height * width
         
         # Adaptive thresholds based on image size
-        min_fiber_area = int(total_pixels * self.min_fiber_ratio)
+        min_fiber_area = max(500, int(total_pixels * self.min_fiber_ratio))
         max_fiber_area = int(total_pixels * self.max_fiber_ratio)
         
-        # Ensure reasonable minimums
-        min_fiber_area = max(min_fiber_area, 500)   # At least 500 pixels
-        
-        # Adaptive morphological kernel size based on image resolution
+        # Adaptive morphological kernel size
         kernel_size = max(3, min(15, int(np.sqrt(total_pixels) / 200)))
         if kernel_size % 2 == 0:
             kernel_size += 1  # Ensure odd number
         
         # Adaptive minimum lumen area
-        min_lumen_area = max(50, int(min_fiber_area * 0.02))  # At least 2% of min fiber
+        min_lumen_area = max(50, int(min_fiber_area * 0.02))
         
         thresholds = {
             'min_fiber_area': min_fiber_area,
@@ -62,9 +74,17 @@ class FiberTypeDetector:
         }
         
         return thresholds
-    
+        
     def preprocess_for_detection(self, image: np.ndarray) -> np.ndarray:
-        """Adaptive preprocessing based on image characteristics."""
+        """
+        Adaptive preprocessing based on image characteristics.
+        
+        Args:
+            image: Input grayscale image
+            
+        Returns:
+            Preprocessed image optimized for segmentation
+        """
         # Adaptive blur based on image size
         blur_size = max(3, min(9, int(np.sqrt(image.shape[0] * image.shape[1]) / 300)))
         if blur_size % 2 == 0:
@@ -83,33 +103,35 @@ class FiberTypeDetector:
     
     def segment_fibers(self, image: np.ndarray) -> Tuple[np.ndarray, List[Dict]]:
         """
-        FIXED: Adaptive fiber segmentation with guaranteed mask creation.
-        Uses multiple fallback methods to ensure a fiber mask is always created.
+        FIXED: SEM-specific segmentation for bright fibers on dark background.
+        Uses inverted thresholding and multiple fallback methods.
+        
+        Args:
+            image: Preprocessed grayscale image
+            
+        Returns:
+            Tuple of (binary_mask, fiber_properties_list)
         """
         # Calculate adaptive thresholds
         thresholds = self.calculate_adaptive_thresholds(image)
         
-        # Method 1: Standard Otsu thresholding
-        fiber_mask, fiber_properties = self._try_otsu_segmentation(image, thresholds)
-        
+        # Method 1: Inverted Otsu (bright fibers on dark background)
+        fiber_mask, fiber_properties = self._try_inverted_otsu(image, thresholds)
         if len(fiber_properties) > 0 and np.sum(fiber_mask > 0) > thresholds['min_fiber_area']:
             return fiber_mask, fiber_properties
         
-        # Method 2: Multi-level thresholding
-        fiber_mask, fiber_properties = self._try_multilevel_segmentation(image, thresholds)
-        
+        # Method 2: Percentile-based bright region segmentation
+        fiber_mask, fiber_properties = self._try_bright_region_segmentation(image, thresholds)
         if len(fiber_properties) > 0 and np.sum(fiber_mask > 0) > thresholds['min_fiber_area']:
             return fiber_mask, fiber_properties
         
-        # Method 3: Adaptive thresholding
-        fiber_mask, fiber_properties = self._try_adaptive_segmentation(image, thresholds)
-        
+        # Method 3: Adaptive bright segmentation
+        fiber_mask, fiber_properties = self._try_adaptive_bright_segmentation(image, thresholds)
         if len(fiber_properties) > 0 and np.sum(fiber_mask > 0) > thresholds['min_fiber_area']:
             return fiber_mask, fiber_properties
         
-        # Method 4: Edge-based segmentation
-        fiber_mask, fiber_properties = self._try_edge_segmentation(image, thresholds)
-        
+        # Method 4: Edge-based with hole filling
+        fiber_mask, fiber_properties = self._try_edge_with_filling(image, thresholds)
         if len(fiber_properties) > 0 and np.sum(fiber_mask > 0) > thresholds['min_fiber_area']:
             return fiber_mask, fiber_properties
         
@@ -118,55 +140,153 @@ class FiberTypeDetector:
         
         return fiber_mask, fiber_properties
     
-    def _try_otsu_segmentation(self, image: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
-        """Try standard Otsu thresholding segmentation."""
+    def _try_inverted_otsu(self, image: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
+        """FIXED: Inverted Otsu for bright fibers on dark background."""
         try:
-            _, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            return self._process_binary_mask(binary, thresholds)
+            # Get Otsu threshold value
+            threshold_val, _ = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            
+            # Apply threshold to keep BRIGHT regions (fibers are bright in SEM)
+            _, binary = cv2.threshold(image, threshold_val, 255, cv2.THRESH_BINARY)
+            
+            return self._process_binary_mask_enhanced(binary, thresholds)
         except:
             return np.zeros_like(image, dtype=np.uint8), []
     
-    def _try_multilevel_segmentation(self, image: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
-        """Try multi-level thresholding."""
+    def _try_bright_region_segmentation(self, image: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
+        """Segment bright regions using percentile thresholds."""
         try:
-            # Try different threshold levels
-            for percentile in [75, 85, 65, 95, 55]:
+            best_mask = None
+            best_properties = []
+            best_area = 0
+            
+            # Try different percentile thresholds for BRIGHT regions
+            for percentile in [60, 70, 50, 80, 40]:
                 threshold_val = np.percentile(image, percentile)
+                
+                # Keep pixels ABOVE threshold (bright regions)
                 _, binary = cv2.threshold(image, threshold_val, 255, cv2.THRESH_BINARY)
                 
-                fiber_mask, fiber_properties = self._process_binary_mask(binary, thresholds)
-                if len(fiber_properties) > 0:
-                    return fiber_mask, fiber_properties
+                fiber_mask, fiber_properties = self._process_binary_mask_enhanced(binary, thresholds)
+                total_area = np.sum(fiber_mask > 0)
+                
+                if len(fiber_properties) > 0 and total_area > best_area:
+                    best_area = total_area
+                    best_mask = fiber_mask
+                    best_properties = fiber_properties
             
-            return np.zeros_like(image, dtype=np.uint8), []
+            return best_mask if best_mask is not None else np.zeros_like(image, dtype=np.uint8), best_properties
         except:
             return np.zeros_like(image, dtype=np.uint8), []
     
-    def _try_adaptive_segmentation(self, image: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
-        """Try adaptive thresholding."""
+    def _try_adaptive_bright_segmentation(self, image: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
+        """Adaptive thresholding for bright regions."""
         try:
+            # Adaptive threshold for bright regions
             binary = cv2.adaptiveThreshold(image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, 
-                                         cv2.THRESH_BINARY, 15, 2)
-            return self._process_binary_mask(binary, thresholds)
+                                         cv2.THRESH_BINARY, 15, -2)  # Negative C for bright regions
+            
+            return self._process_binary_mask_enhanced(binary, thresholds)
         except:
             return np.zeros_like(image, dtype=np.uint8), []
     
-    def _try_edge_segmentation(self, image: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
-        """Try edge-based segmentation."""
+    def _try_edge_with_filling(self, image: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
+        """Edge detection with hole filling for fiber structures."""
         try:
-            # Edge detection
-            edges = cv2.Canny(image, 50, 150)
+            # Edge detection with lower thresholds for SEM
+            edges = cv2.Canny(image, 30, 100)
             
-            # Fill contours
+            # Dilate edges to connect them
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            edges = cv2.dilate(edges, kernel, iterations=2)
+            
+            # Find contours and fill them
             contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             binary = np.zeros_like(image, dtype=np.uint8)
             
             for contour in contours:
-                cv2.fillPoly(binary, [contour], 255)
+                # Fill contour if it's large enough
+                if cv2.contourArea(contour) > 1000:
+                    cv2.fillPoly(binary, [contour], 255)
             
-            return self._process_binary_mask(binary, thresholds)
+            return self._process_binary_mask_enhanced(binary, thresholds)
         except:
             return np.zeros_like(image, dtype=np.uint8), []
+    
+    def _process_binary_mask_enhanced(self, binary: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
+        """Enhanced binary mask processing optimized for SEM fiber images."""
+        
+        # Enhanced morphological operations for SEM fibers
+        kernel_size = max(5, thresholds['kernel_size'])
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        
+        # Close holes within fibers (important for porous fiber walls)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+        
+        # Remove small noise
+        small_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, small_kernel, iterations=1)
+        
+        # Fill holes completely (critical for hollow fiber rings)
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        filled_binary = np.zeros_like(binary)
+        
+        for contour in contours:
+            cv2.fillPoly(filled_binary, [contour], 255)
+        
+        binary = filled_binary
+        
+        # Find final contours
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Filter contours and create fiber mask
+        fiber_properties = []
+        fiber_mask = np.zeros_like(binary, dtype=np.uint8)
+        
+        for i, contour in enumerate(contours):
+            area = cv2.contourArea(contour)
+            
+            # RELAXED area filtering for SEM images
+            min_area = max(1000, thresholds['min_fiber_area'] * 0.1)  # Much more lenient
+            if area < min_area or area > thresholds['max_fiber_area']:
+                continue
+            
+            # Calculate geometric properties
+            props = self._calculate_contour_properties(contour, area)
+            
+            # VERY RELAXED shape validation for SEM fibers
+            if self._is_valid_sem_fiber_shape(props, thresholds):
+                props['contour_id'] = i
+                props['contour'] = contour
+                props['thresholds'] = thresholds
+                fiber_properties.append(props)
+                
+                # Add this fiber to the mask
+                cv2.fillPoly(fiber_mask, [contour], 255)
+        
+        return fiber_mask, fiber_properties
+    
+    def _is_valid_sem_fiber_shape(self, props: Dict, thresholds: Dict) -> bool:
+        """VERY RELAXED shape validation specifically for SEM fiber images."""
+        
+        # Basic area check - much more lenient
+        area_ratio = props['area'] / thresholds['image_total_pixels']
+        if area_ratio < 0.00001:  # Only reject truly tiny specks
+            return False
+        
+        # VERY lenient circularity - SEM fibers can be quite irregular
+        if props['circularity'] < 0.01:  # Almost no restriction
+            return False
+        
+        # Allow very elongated shapes (damaged fibers, partial views)
+        if props['aspect_ratio'] > 10.0:  # Very generous
+            return False
+        
+        # Very lenient solidity - SEM fibers often have irregular edges
+        if props['solidity'] < 0.2:  # Very low threshold
+            return False
+        
+        return True
     
     def _create_emergency_mask(self, image: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
         """Create emergency fallback mask when all segmentation methods fail."""
@@ -208,114 +328,102 @@ class FiberTypeDetector:
         return emergency_mask, [emergency_props]
     
     def _process_binary_mask(self, binary: np.ndarray, thresholds: Dict) -> Tuple[np.ndarray, List[Dict]]:
-        """Process binary mask to extract fiber properties."""
-        # Adaptive morphological operations
-        kernel_size = thresholds['kernel_size']
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
-        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
-        
-        # Find contours
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        # Filter contours and create fiber mask
-        fiber_properties = []
-        fiber_mask = np.zeros_like(binary, dtype=np.uint8)
-        
-        for i, contour in enumerate(contours):
-            area = cv2.contourArea(contour)
-            
-            # Adaptive area filtering
-            if area < thresholds['min_fiber_area'] or area > thresholds['max_fiber_area']:
-                continue
-            
-            # Calculate geometric properties
-            props = self._calculate_contour_properties(contour, area)
-            
-            # Adaptive shape validation
-            if self._is_valid_fiber_shape(props, thresholds):
-                props['contour_id'] = i
-                props['contour'] = contour
-                props['thresholds'] = thresholds
-                fiber_properties.append(props)
-                
-                # Add this fiber to the mask
-                cv2.fillPoly(fiber_mask, [contour], 255)
-        
-        return fiber_mask, fiber_properties
+        """Process binary mask to extract fiber properties - delegates to enhanced version."""
+        return self._process_binary_mask_enhanced(binary, thresholds)
     
     def _calculate_contour_properties(self, contour: np.ndarray, area: float) -> Dict:
-        """Calculate geometric properties of a contour."""
-        perimeter = cv2.arcLength(contour, True)
-        x, y, w, h = cv2.boundingRect(contour)
-        (cx, cy), radius = cv2.minEnclosingCircle(contour)
+        """
+        Calculate geometric properties of a contour with error handling.
         
-        # Fit ellipse (if enough points)
-        if len(contour) >= 5:
-            try:
-                ellipse = cv2.fitEllipse(contour)
-                ellipse_area = np.pi * (ellipse[1][0]/2) * (ellipse[1][1]/2)
-            except:
+        Args:
+            contour: OpenCV contour
+            area: Contour area
+            
+        Returns:
+            Dictionary of geometric properties
+        """
+        try:
+            perimeter = cv2.arcLength(contour, True)
+            x, y, w, h = cv2.boundingRect(contour)
+            (cx, cy), radius = cv2.minEnclosingCircle(contour)
+            
+            # Fit ellipse (if enough points)
+            if len(contour) >= 5:
+                try:
+                    ellipse = cv2.fitEllipse(contour)
+                    ellipse_area = np.pi * (ellipse[1][0]/2) * (ellipse[1][1]/2)
+                except:
+                    ellipse = None
+                    ellipse_area = 0
+            else:
                 ellipse = None
                 ellipse_area = 0
-        else:
-            ellipse = None
-            ellipse_area = 0
-        
-        # Calculate shape descriptors with error handling
-        try:
+            
+            # Calculate shape descriptors with error handling
             circularity = 4 * np.pi * area / (perimeter ** 2) if perimeter > 0 else 0
             aspect_ratio = max(w, h) / min(w, h) if min(w, h) > 0 else 1
             extent = area / (w * h) if w * h > 0 else 0
             
-            hull = cv2.convexHull(contour)
-            hull_area = cv2.contourArea(hull)
-            solidity = area / hull_area if hull_area > 0 else 0
-        except:
-            circularity = 0.5
-            aspect_ratio = 1.0
-            extent = 0.5
-            solidity = 0.8
-        
-        return {
-            'area': area,
-            'perimeter': perimeter,
-            'centroid': (cx, cy),
-            'radius': radius,
-            'bounding_rect': (x, y, w, h),
-            'ellipse': ellipse,
-            'ellipse_area': ellipse_area,
-            'circularity': circularity,
-            'aspect_ratio': aspect_ratio,
-            'extent': extent,
-            'solidity': solidity
-        }
+            try:
+                hull = cv2.convexHull(contour)
+                hull_area = cv2.contourArea(hull)
+                solidity = area / hull_area if hull_area > 0 else 0
+            except:
+                solidity = 0.8  # Default value
+            
+            return {
+                'area': area,
+                'perimeter': perimeter,
+                'centroid': (cx, cy),
+                'radius': radius,
+                'bounding_rect': (x, y, w, h),
+                'ellipse': ellipse,
+                'ellipse_area': ellipse_area,
+                'circularity': circularity,
+                'aspect_ratio': aspect_ratio,
+                'extent': extent,
+                'solidity': solidity
+            }
+        except Exception as e:
+            # Return safe defaults on error
+            return {
+                'area': area,
+                'perimeter': 0,
+                'centroid': (0, 0),
+                'radius': 0,
+                'bounding_rect': (0, 0, 0, 0),
+                'ellipse': None,
+                'ellipse_area': 0,
+                'circularity': 0.5,
+                'aspect_ratio': 1.0,
+                'extent': 0.5,
+                'solidity': 0.8
+            }
     
-    def _is_valid_fiber_shape(self, props: Dict, thresholds: Dict) -> bool:
-        """Adaptive shape validation based on image characteristics."""
-        # Very lenient validation to ensure we don't reject valid fibers
+    def _is_valid_fiber_shape_relaxed(self, props: Dict, thresholds: Dict) -> bool:
+        """
+        RELAXED shape validation - delegates to SEM-specific validation.
         
-        # Basic area check
-        area_ratio = props['area'] / thresholds['image_total_pixels']
-        if area_ratio < 0.0001:  # Too small
-            return False
-        
-        # Lenient circularity check
-        if props['circularity'] < 0.1:  # Very lenient
-            return False
-        
-        # Lenient aspect ratio check
-        if props['aspect_ratio'] > 5.0:  # Allow elongated shapes
-            return False
-        
-        # Basic solidity check
-        if props['solidity'] < 0.3:  # Very lenient
-            return False
-        
-        return True
+        Args:
+            props: Contour properties dictionary
+            thresholds: Adaptive thresholds dictionary
+            
+        Returns:
+            True if valid fiber shape
+        """
+        return self._is_valid_sem_fiber_shape(props, thresholds)
     
     def detect_lumen(self, image: np.ndarray, fiber_contour: np.ndarray) -> Tuple[bool, Dict]:
-        """Adaptive lumen detection with enhanced error handling."""
+        """
+        FIXED: Improved lumen detection using optimal threshold method with enhanced error handling.
+        
+        Args:
+            image: Original grayscale image
+            fiber_contour: Contour of the fiber
+            
+        Returns:
+            Tuple of (has_lumen, lumen_properties)
+        """
         try:
             # Get adaptive thresholds
             thresholds = self.calculate_adaptive_thresholds(image)
@@ -331,8 +439,9 @@ class FiberTypeDetector:
             if len(fiber_pixels) == 0:
                 return False, {}
             
-            # Adaptive threshold based on fiber characteristics
-            threshold = 50  # Start with proven threshold
+            # FIXED: Use the optimal threshold method (fixed low threshold = 50)
+            # This works best for SEM images based on test results
+            threshold = 50  # Optimal threshold found in testing
             
             # Adjust threshold based on image characteristics
             mean_intensity = fiber_pixels.mean()
@@ -367,7 +476,7 @@ class FiberTypeDetector:
             lumen_props['threshold_used'] = threshold
             lumen_props['contour'] = largest_lumen
             
-            # Adaptive validation
+            # Validate lumen with relaxed criteria
             is_lumen = self._validate_lumen_enhanced(lumen_props, fiber_contour, thresholds)
             
             return is_lumen, lumen_props
@@ -377,7 +486,17 @@ class FiberTypeDetector:
             return False, {'error': str(e)}
     
     def _validate_lumen_enhanced(self, lumen_props: Dict, fiber_contour: np.ndarray, thresholds: Dict) -> bool:
-        """Enhanced adaptive lumen validation with error handling."""
+        """
+        Enhanced validation for lumens with relaxed criteria and error handling.
+        
+        Args:
+            lumen_props: Properties of detected lumen
+            fiber_contour: Contour of parent fiber
+            thresholds: Adaptive thresholds dictionary
+            
+        Returns:
+            True if valid lumen
+        """
         try:
             # Area ratio check (adaptive based on fiber size)
             min_area_ratio = self.lumen_area_threshold
@@ -391,11 +510,11 @@ class FiberTypeDetector:
             if not (min_area_ratio <= lumen_props['area_ratio'] <= max_area_ratio):
                 return False
             
-            # Very lenient circularity check
-            if lumen_props['circularity'] < 0.05:
+            # Very relaxed circularity requirement
+            if lumen_props['circularity'] < 0.05:  # Very lenient
                 return False
             
-            # Adaptive centrality check
+            # Check if lumen is reasonably central (very lenient)
             fiber_moments = cv2.moments(fiber_contour)
             if fiber_moments['m00'] > 0:
                 fiber_cx = fiber_moments['m10'] / fiber_moments['m00']
@@ -406,7 +525,7 @@ class FiberTypeDetector:
                 
                 # Very lenient centrality tolerance
                 fiber_radius = np.sqrt(fiber_area / np.pi)
-                max_distance_ratio = 0.7  # Allow 70% offset
+                max_distance_ratio = 0.7  # Allow 70% offset (very lenient)
                 
                 if distance > max_distance_ratio * fiber_radius:
                     return False
@@ -421,6 +540,12 @@ class FiberTypeDetector:
         """
         FIXED: Main classification function with guaranteed comprehensive results.
         Always returns a valid fiber mask and classification, even if detection fails.
+        
+        Args:
+            image: Input grayscale image
+            
+        Returns:
+            Tuple of (fiber_type, confidence, analysis_data)
         """
         try:
             # Calculate adaptive thresholds
@@ -455,7 +580,7 @@ class FiberTypeDetector:
                     'type': 'hollow_fiber' if has_lumen else 'filament'
                 })
             
-            # Determine classification based on largest fiber
+            # Determine classification based on largest fiber (most reliable)
             if analysis_results:
                 largest_fiber_result = max(analysis_results, key=lambda x: x['fiber_properties']['area'])
                 final_type = largest_fiber_result['type']
@@ -474,7 +599,7 @@ class FiberTypeDetector:
                 'total_fibers': total_count,
                 'hollow_fibers': hollow_count,
                 'filaments': total_count - hollow_count,
-                'fiber_mask': fiber_mask,  # GUARANTEED to be valid
+                'fiber_mask': fiber_mask,  # GUARANTEED to be valid uint8 mask
                 'individual_results': analysis_results,
                 'preprocessed_image': preprocessed,
                 'thresholds': thresholds,
@@ -487,7 +612,7 @@ class FiberTypeDetector:
             
         except Exception as e:
             # Ultimate fallback - create minimal working result
-            emergency_mask, emergency_props = self._create_emergency_mask(image, {'min_fiber_area': 1000})
+            emergency_mask, emergency_props = self._create_emergency_mask(image, {'min_fiber_area': 1000, 'image_total_pixels': image.size})
             
             return "unknown", 0.1, {
                 'total_fibers': 1,
@@ -510,7 +635,18 @@ class FiberTypeDetector:
             }
     
     def _calculate_type_confidence(self, fiber_props: Dict, has_lumen: bool, lumen_props: Dict, thresholds: Dict) -> float:
-        """Calculate confidence score with error handling."""
+        """
+        Calculate confidence score for fiber type classification with error handling.
+        
+        Args:
+            fiber_props: Fiber geometric properties
+            has_lumen: Whether lumen was detected
+            lumen_props: Lumen properties (if detected)
+            thresholds: Adaptive thresholds dictionary
+            
+        Returns:
+            Confidence score (0-1)
+        """
         try:
             base_confidence = 0.5
             
@@ -542,6 +678,13 @@ class FiberTypeDetector:
 def detect_fiber_type(image: np.ndarray, **kwargs) -> Tuple[str, float]:
     """
     Convenience function for fiber type detection with guaranteed results.
+    
+    Args:
+        image: Input grayscale image
+        **kwargs: Additional parameters for FiberTypeDetector
+        
+    Returns:
+        Tuple of (fiber_type, confidence)
     """
     try:
         detector = FiberTypeDetector(**kwargs)
@@ -551,7 +694,14 @@ def detect_fiber_type(image: np.ndarray, **kwargs) -> Tuple[str, float]:
         return "unknown", 0.1
 
 def visualize_fiber_type_analysis(image: np.ndarray, analysis_data: Dict, figsize: Tuple[int, int] = (15, 10)):
-    """Visualize the fiber type detection results with error handling."""
+    """
+    Visualize the fiber type detection results with comprehensive error handling.
+    
+    Args:
+        image: Original image
+        analysis_data: Analysis results from classify_fiber_type
+        figsize: Figure size
+    """
     try:
         fig, axes = plt.subplots(2, 3, figsize=figsize)
         axes = axes.flatten()
@@ -570,7 +720,9 @@ def visualize_fiber_type_analysis(image: np.ndarray, analysis_data: Dict, figsiz
         # Fiber mask
         fiber_mask = analysis_data.get('fiber_mask', np.zeros_like(image))
         axes[2].imshow(fiber_mask, cmap='gray')
-        axes[2].set_title(f'Detected Fibers\n({analysis_data.get("mask_area_pixels", 0):,} pixels)')
+        mask_area = analysis_data.get('mask_area_pixels', np.sum(fiber_mask > 0))
+        coverage = analysis_data.get('mask_coverage_percent', mask_area / fiber_mask.size * 100)
+        axes[2].set_title(f'Detected Fibers\n({mask_area:,} pixels, {coverage:.1f}%)')
         axes[2].axis('off')
         
         # Classification overlay
@@ -595,23 +747,29 @@ def visualize_fiber_type_analysis(image: np.ndarray, analysis_data: Dict, figsiz
         axes[3].set_title('Classification Results\n(Green=Hollow, Red=Solid, Cyan=Lumen)')
         axes[3].axis('off')
         
-        # Summary
-        summary_text = f"Method: {analysis_data.get('classification_method', 'unknown')}\n"
+        # Summary with adaptive info
+        thresholds = analysis_data.get('thresholds', {})
+        method = analysis_data.get('classification_method', 'adaptive')
+        
+        summary_text = f"Method: {method}\n"
         summary_text += f"Total Fibers: {analysis_data.get('total_fibers', 0)}\n"
         summary_text += f"Hollow: {analysis_data.get('hollow_fibers', 0)}\n"
-        summary_text += f"Filaments: {analysis_data.get('filaments', 0)}\n"
-        summary_text += f"Mask Coverage: {analysis_data.get('mask_coverage_percent', 0):.1f}%\n"
+        summary_text += f"Filaments: {analysis_data.get('filaments', 0)}\n\n"
+        summary_text += f"Adaptive Thresholds:\n"
+        summary_text += f"Min area: {thresholds.get('min_fiber_area', 0):,}\n"
+        summary_text += f"Max area: {thresholds.get('max_fiber_area', 0):,}\n"
+        summary_text += f"Kernel: {thresholds.get('kernel_size', 0)}\n"
         
         # Show error if present
         if 'error' in analysis_data:
-            summary_text += f"\nError: {analysis_data['error'][:50]}..."
+            summary_text += f"\nError: {analysis_data['error'][:30]}..."
         
         axes[4].text(0.05, 0.95, summary_text, transform=axes[4].transAxes,
                     fontsize=10, verticalalignment='top', fontfamily='monospace')
         axes[4].set_title('Summary')
         axes[4].axis('off')
         
-        # Confidence scores
+        # Individual confidence scores
         confidences = [result.get('confidence', 0) for result in individual_results]
         if confidences:
             axes[5].bar(range(len(confidences)), confidences)
@@ -623,14 +781,14 @@ def visualize_fiber_type_analysis(image: np.ndarray, analysis_data: Dict, figsiz
             axes[5].text(0.5, 0.5, 'No confidence\ndata available', 
                         ha='center', va='center', transform=axes[5].transAxes)
             axes[5].set_title('Confidence Scores')
-        axes[5].axis('off')
+            axes[5].axis('off')
         
         plt.tight_layout()
         plt.show()
         
     except Exception as e:
         print(f"Visualization error: {e}")
-        # Show minimal visualization
+        # Show minimal visualization on error
         plt.figure(figsize=(10, 5))
         plt.subplot(1, 2, 1)
         plt.imshow(image, cmap='gray')
