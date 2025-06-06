@@ -144,7 +144,7 @@ def test_single_image_crumbly_detection(image_path, output_dir, verbose=True):
             print("   🕳️ Step 4: Analyzing crumbly texture...")
         
         # Initialize crumbly detector
-        crumbly_detector = CrumblyDetector()
+        crumbly_detector = CrumblyDetector(porosity_aware=True)
         
         # Analyze each detected fiber individually
         fiber_crumbly_results = []
@@ -177,7 +177,7 @@ def test_single_image_crumbly_detection(image_path, output_dir, verbose=True):
                 individual_fiber_mask, 
                 lumen_mask, 
                 scale_factor,
-                debug=False
+                debug=True
             )
             
             # Add fiber ID and metadata
