@@ -1058,136 +1058,127 @@ class CrumblyDetector:
         try:
             # Initialize score components
             crumbly_indicators = []
-            porous_but_intact_indicators = []
+            porous_indicators = []
+            intermediate_indicators = []
             confidence_factors = []
             
-            # 1. PORE ORGANIZATION ANALYSIS (Most Important)
-            # Well-organized pores indicate healthy porosity, not crumbly texture
+            # 1. PORE SIZE AND EDGE ANALYSIS (Critical for distinction)
+            pore_count = pore_metrics.get('pore_count', 0)
+            mean_pore_area = pore_metrics.get('mean_pore_area_um2', 0)
+            pore_circularity = pore_metrics.get('mean_pore_circularity', 0.5)
+            pore_smoothness = pore_metrics.get('mean_pore_edge_smoothness', 0.5)
             pore_organization = pore_metrics.get('organized_porosity_score', 0.5)
             
-            if pore_organization > 0.7:
-                porous_but_intact_indicators.append(pore_organization)
-                confidence_factors.append(f"Well-organized pores: {pore_organization:.2f}")
-            elif pore_organization < 0.4:
-                crumbly_indicators.append(1.0 - pore_organization)
-                confidence_factors.append(f"Disorganized pores: {pore_organization:.2f}")
+            # Large pores with smooth edges = porous
+            # Large voids with jagged edges = crumbly
+            # Small pores = intermediate
             
-            # Pore circularity - round pores = organized, irregular = fragmented
-            pore_circularity = pore_metrics.get('mean_pore_circularity', 0.5)
-            if pore_circularity > 0.6:
-                porous_but_intact_indicators.append(pore_circularity)
-                confidence_factors.append(f"Round pores: {pore_circularity:.2f}")
-            elif pore_circularity < 0.3:
-                crumbly_indicators.append(1.0 - pore_circularity)
-                confidence_factors.append(f"Irregular pores: {pore_circularity:.2f}")
+            if pore_count > 0:
+                # Check for crumbly characteristics
+                if pore_circularity < 0.3 and pore_smoothness < 0.3:
+                    # Very irregular, rough edges = crumbly fragmentation
+                    crumbly_indicators.append(1.0 - min(pore_circularity, pore_smoothness))
+                    confidence_factors.append(f"Fragmented voids: circularity={pore_circularity:.2f}")
+                elif pore_circularity > 0.6 and pore_smoothness > 0.6 and mean_pore_area > 100:
+                    # Round, smooth, large pores = organized porosity
+                    porous_indicators.append(min(pore_circularity, pore_smoothness))
+                    confidence_factors.append(f"Organized pores: circularity={pore_circularity:.2f}")
+                elif mean_pore_area < 50:
+                    # Small pores = intermediate
+                    intermediate_indicators.append(0.7)
+                    confidence_factors.append(f"Small pores: area={mean_pore_area:.1f}μm²")
             
-            # Pore edge smoothness
-            pore_smoothness = pore_metrics.get('mean_pore_edge_smoothness', 0.5)
-            if pore_smoothness > 0.6:
-                porous_but_intact_indicators.append(pore_smoothness)
-                confidence_factors.append(f"Smooth pore edges: {pore_smoothness:.2f}")
-            elif pore_smoothness < 0.4:
-                crumbly_indicators.append(1.0 - pore_smoothness)
-                confidence_factors.append(f"Rough pore edges: {pore_smoothness:.2f}")
-            
-            # 2. WALL INTEGRITY ANALYSIS (Second Most Important)
+            # 2. WALL FRAGMENTATION ANALYSIS (Key differentiator)
             wall_integrity = wall_integrity_metrics.get('wall_integrity_score', 0.5)
+            fragmentation_score = wall_integrity_metrics.get('fragmentation_metrics', {}).get('fragmentation_score', 0.5)
+            thickness_consistency = wall_integrity_metrics.get('thickness_metrics', {}).get('thickness_consistency', 0.5)
             
-            if wall_integrity > 0.7:
-                porous_but_intact_indicators.append(wall_integrity)
-                confidence_factors.append(f"Intact walls: {wall_integrity:.2f}")
-            elif wall_integrity < 0.4:
-                crumbly_indicators.append(1.0 - wall_integrity)
-                confidence_factors.append(f"Fragmented walls: {wall_integrity:.2f}")
+            # Crumbly fibers have highly fragmented, inconsistent walls
+            if fragmentation_score > 0.6 and thickness_consistency < 0.3:
+                crumbly_indicators.append(fragmentation_score)
+                confidence_factors.append(f"Fragmented walls: score={fragmentation_score:.2f}")
+            elif wall_integrity > 0.7 and thickness_consistency > 0.6:
+                porous_indicators.append(wall_integrity)
+                confidence_factors.append(f"Intact walls: integrity={wall_integrity:.2f}")
+            else:
+                intermediate_indicators.append(0.5)
             
-            # Wall continuity
-            continuity = wall_integrity_metrics.get('continuity_metrics', {}).get('continuity_score', 0.5)
-            if continuity > 0.8:
-                porous_but_intact_indicators.append(continuity)
-                confidence_factors.append(f"Continuous walls: {continuity:.2f}")
-            elif continuity < 0.5:
-                crumbly_indicators.append(1.0 - continuity)
-                confidence_factors.append(f"Broken walls: {continuity:.2f}")
+            # 3. SURFACE TEXTURE ANALYSIS
+            surface_roughness = surface_metrics.get('roughness_metrics', {}).get('kernel_5', {}).get('mean_roughness', 0)
+            texture_variation = surface_metrics.get('variation_metrics', {}).get('mean_local_variation', 0)
             
-            # 3. BOUNDARY ANALYSIS (Refined for porosity)
+            # Normalize surface roughness (assuming typical range 0-50)
+            normalized_roughness = min(1.0, surface_roughness / 30.0)
+            
+            # Crumbly surfaces are very rough and irregular
+            if normalized_roughness > 0.7 and texture_variation > 20:
+                crumbly_indicators.append(normalized_roughness)
+                confidence_factors.append(f"Rough surface: roughness={surface_roughness:.1f}")
+            elif normalized_roughness < 0.3:
+                porous_indicators.append(1.0 - normalized_roughness)
+            
+            # 4. BOUNDARY ANALYSIS
             if 'outer_boundary' in boundary_metrics:
                 outer = boundary_metrics['outer_boundary']
-                
-                # Circularity of overall fiber shape
-                overall_circularity = outer.get('circularity', 0.5)
-                if overall_circularity > 0.7:
-                    porous_but_intact_indicators.append(overall_circularity)
-                    confidence_factors.append(f"Regular fiber shape: {overall_circularity:.2f}")
-                elif overall_circularity < 0.4:
-                    crumbly_indicators.append(1.0 - overall_circularity)
-                    confidence_factors.append(f"Irregular fiber shape: {overall_circularity:.2f}")
-                
-                # Roughness of fiber boundary
                 boundary_roughness = outer.get('roughness_index', 0.5)
-                if boundary_roughness > 0.4:  # Higher threshold for porous materials
+                fractal_dim = outer.get('fractal_dimension', 1.0)
+                
+                # Crumbly fibers have very rough, fractal-like boundaries
+                if boundary_roughness > 0.6 and fractal_dim > 1.5:
                     crumbly_indicators.append(boundary_roughness)
                     confidence_factors.append(f"Rough boundary: {boundary_roughness:.2f}")
-                elif boundary_roughness < 0.2:
-                    porous_but_intact_indicators.append(1.0 - boundary_roughness)
-                    confidence_factors.append(f"Smooth boundary: {boundary_roughness:.2f}")
+                elif boundary_roughness < 0.3:
+                    porous_indicators.append(1.0 - boundary_roughness)
             
-            # 4. TEXTURE ANALYSIS (Supporting evidence)
-            # LBP uniformity - but adjusted for porous materials
-            lbp_uniformity = lbp_metrics.get('lbp_uniformity', 0.3)
-            if lbp_uniformity > 0.4:  # More lenient for porous materials
-                porous_but_intact_indicators.append(lbp_uniformity)
-            elif lbp_uniformity < 0.2:
-                crumbly_indicators.append(1.0 - lbp_uniformity)
-            
-            # GLCM contrast - high contrast can be from pores, not necessarily crumbly
-            glcm_contrast = glcm_metrics.get('contrast', 0)
-            normalized_contrast = min(1.0, glcm_contrast / 100.0)  # Normalize
-            
-            # Only consider extreme contrast as crumbly indicator
-            if normalized_contrast > 0.8:
-                crumbly_indicators.append(normalized_contrast)
-                confidence_factors.append(f"High texture contrast: {normalized_contrast:.2f}")
-            
-            # 5. EDGE ANALYSIS (Supporting)
+            # 5. TEXTURE METRICS
+            lbp_entropy = lbp_metrics.get('lbp_entropy', 0)
+            glcm_homogeneity = glcm_metrics.get('homogeneity', 0.5)
             edge_density = edge_metrics.get('edge_density', 0.3)
-            # Moderate edge density is normal for porous materials
-            if edge_density > 0.6:  # Very high edge density
+            
+            # Crumbly textures have high entropy, low homogeneity, high edge density
+            if lbp_entropy > 2.5 and glcm_homogeneity < 0.2 and edge_density > 0.7:
                 crumbly_indicators.append(edge_density)
-                confidence_factors.append(f"High edge density: {edge_density:.2f}")
+                confidence_factors.append(f"Chaotic texture: entropy={lbp_entropy:.2f}")
+            elif glcm_homogeneity > 0.6 and edge_density < 0.4:
+                porous_indicators.append(glcm_homogeneity)
             
-            # 6. CALCULATE FINAL SCORES
+            # 6. CALCULATE SCORES AND CLASSIFY
             
-            # Calculate evidence for each classification
+            # Weight the evidence
             crumbly_evidence = np.mean(crumbly_indicators) if crumbly_indicators else 0
-            porous_intact_evidence = np.mean(porous_but_intact_indicators) if porous_but_intact_indicators else 0
+            porous_evidence = np.mean(porous_indicators) if porous_indicators else 0
+            intermediate_evidence = np.mean(intermediate_indicators) if intermediate_indicators else 0
             
-            # Number of indicators for confidence
-            total_indicators = len(crumbly_indicators) + len(porous_but_intact_indicators)
+            # Add bias based on specific strong indicators
+            # Strong crumbly indicators: very low pore circularity + high fragmentation
+            if pore_circularity < 0.2 and fragmentation_score > 0.7:
+                crumbly_evidence = min(1.0, crumbly_evidence + 0.3)
+                confidence_factors.append("Strong crumbly indicators detected")
             
-            # Final crumbly score (0 = definitely not crumbly, 1 = definitely crumbly)
-            if porous_intact_evidence > crumbly_evidence:
-                # Strong evidence for organized porosity
-                crumbly_score = max(0, crumbly_evidence - porous_intact_evidence * 0.5)
-            else:
-                # Evidence leans toward crumbly
-                crumbly_score = crumbly_evidence
+            # Strong porous indicators: high circularity + intact walls
+            if pore_circularity > 0.7 and wall_integrity > 0.8:
+                porous_evidence = min(1.0, porous_evidence + 0.3)
+                confidence_factors.append("Strong porous indicators detected")
             
-            # Classification thresholds (adjusted for porosity awareness)
-            if crumbly_score > 0.7 and crumbly_evidence > 0.6:
+            # Determine classification
+            max_evidence = max(crumbly_evidence, porous_evidence, intermediate_evidence)
+            
+            if crumbly_evidence == max_evidence and crumbly_evidence > 0.5:
                 classification = 'crumbly'
-                confidence = min(0.95, 0.6 + crumbly_evidence)
-            elif crumbly_score < 0.3 and porous_intact_evidence > 0.4:
-                classification = 'porous_but_intact'  # More specific classification
-                confidence = min(0.95, 0.6 + porous_intact_evidence)
-            elif porous_intact_evidence > 0.6:
-                classification = 'porous_but_intact'
-                confidence = min(0.9, 0.5 + porous_intact_evidence)
+                confidence = min(0.95, 0.5 + crumbly_evidence)
+                crumbly_score = crumbly_evidence
+            elif porous_evidence == max_evidence and porous_evidence > 0.4:
+                classification = 'porous'
+                confidence = min(0.95, 0.5 + porous_evidence)
+                crumbly_score = 0.2  # Low crumbly score for porous
             else:
                 classification = 'intermediate'
-                confidence = 0.3 + abs(0.5 - crumbly_score)
+                confidence = 0.4 + intermediate_evidence * 0.4
+                crumbly_score = 0.5  # Middle score for intermediate
             
-            # Boost confidence if we have many indicators
-            if total_indicators > 4:
+            # Adjust confidence based on evidence strength
+            total_indicators = len(crumbly_indicators) + len(porous_indicators) + len(intermediate_indicators)
+            if total_indicators > 5:
                 confidence = min(0.98, confidence + 0.1)
             
             return {
@@ -1195,10 +1186,12 @@ class CrumblyDetector:
                 'confidence': confidence,
                 'crumbly_score': crumbly_score,
                 'crumbly_evidence': crumbly_evidence,
-                'porous_intact_evidence': porous_intact_evidence,
+                'porous_evidence': porous_evidence,
+                'intermediate_evidence': intermediate_evidence,
                 'num_crumbly_indicators': len(crumbly_indicators),
-                'num_intact_indicators': len(porous_but_intact_indicators),
-                'confidence_factors': confidence_factors
+                'num_porous_indicators': len(porous_indicators),
+                'num_intermediate_indicators': len(intermediate_indicators),
+                'confidence_factors': confidence_factors[:8]  # Limit to most important
             }
         
         except Exception as e:
