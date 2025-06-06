@@ -2,6 +2,7 @@
 """
 Enhanced Test Script for SEM Fiber Analysis System with Oval Fitting
 UPDATED: Tests enhanced modules with oval fitting functionality and comprehensive measurements
+FIXED: Now uses centralized results_config.py for all output management
 
 - Uses actual SEM images from sample_images/
 - Tests enhanced fiber detection with oval fitting
@@ -9,6 +10,7 @@ UPDATED: Tests enhanced modules with oval fitting functionality and comprehensiv
 - Outputs debug images showing oval fitting results
 - Tests multiprocessing analyzer functionality
 - Verifies comprehensive Excel reporting with oval data
+- ALL OUTPUTS NOW GO TO CENTRALIZED results/ FOLDER VIA results_config.py
 """
 
 import sys
@@ -28,11 +30,52 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "modules"))
 
+# Import centralized results configuration
+try:
+    from results_config import (
+        get_test_session_dir, get_test_results_path, get_debug_output_path,
+        TEST_RESULTS_DIR, MULTIPROCESSING_DIR, print_results_structure, get_results_info
+    )
+    RESULTS_CONFIGURED = True
+    print("✅ Centralized results configuration loaded")
+except ImportError:
+    # Fallback if results_config.py doesn't exist
+    RESULTS_CONFIGURED = False
+    TEST_RESULTS_DIR = Path("results") / "test_results"
+    MULTIPROCESSING_DIR = Path("results") / "multiprocessing_results"
+    TEST_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    MULTIPROCESSING_DIR.mkdir(parents=True, exist_ok=True)
+    
+    def get_test_session_dir() -> Path:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        session_dir = TEST_RESULTS_DIR / f"test_session_{timestamp}"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        return session_dir
+    
+    def get_test_results_path(filename: str) -> Path:
+        return TEST_RESULTS_DIR / filename
+    
+    def get_debug_output_path(filename: str) -> Path:
+        return TEST_RESULTS_DIR / filename
+    
+    def print_results_structure():
+        print("⚠️ Using fallback results configuration")
+    
+    print("⚠️ Using fallback results configuration")
+
 print("🔧 Enhanced SEM Fiber Analysis System - Real Image Test Suite with Oval Fitting")
 print("=" * 80)
 print(f"Python version: {sys.version}")
 print(f"Working directory: {os.getcwd()}")
 print(f"Project root: {project_root}")
+
+if RESULTS_CONFIGURED:
+    print(f"✅ Results will be saved to centralized results/ folder structure")
+    # Show the results structure
+    print("\n📁 Results Directory Structure:")
+    print_results_structure()
+else:
+    print(f"⚠️ Using fallback - results will be saved to: {TEST_RESULTS_DIR}")
 
 # Global variables to track available modules
 MODULES_AVAILABLE = {}
@@ -144,16 +187,10 @@ def find_sample_image():
     return None, []
 
 def create_debug_output_dir():
-    """Create debug output directory"""
-    debug_dir = Path("enhanced_test_debug_output")
-    debug_dir.mkdir(exist_ok=True)
-    
-    # Create timestamp subdirectory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    session_dir = debug_dir / f"enhanced_test_session_{timestamp}"
-    session_dir.mkdir(exist_ok=True)
-    
-    print(f"📁 Enhanced debug output directory: {session_dir}")
+    """Create debug output directory using centralized results config"""
+    # FIXED: Use centralized test session directory
+    session_dir = get_test_session_dir()
+    print(f"📁 Test session directory: {session_dir}")
     return session_dir
 
 def test_image_preprocessing_with_debug(image_path, debug_dir, verbose=True):
@@ -211,12 +248,13 @@ def test_image_preprocessing_with_debug(image_path, debug_dir, verbose=True):
             plt.suptitle(f'Image Preprocessing Steps - {Path(image_path).name}', fontsize=16)
             plt.tight_layout()
             
+            # FIXED: Save to centralized debug directory
             debug_file = debug_dir / 'preprocessing_steps.png'
             plt.savefig(debug_file, dpi=150, bbox_inches='tight')
             plt.close()
             
             if verbose:
-                print(f"   💾 Debug image saved: {debug_file.name}")
+                print(f"   💾 Debug image saved: {debug_file}")
             
             return True, result
         else:
@@ -333,12 +371,13 @@ def _create_scale_debug_image(image, scale_result, debug_dir, verbose):
         plt.suptitle('Scale Detection Test (Comprehensive Analyzer Method)', fontsize=14)
         plt.tight_layout()
         
+        # FIXED: Save to centralized debug directory
         debug_file = debug_dir / 'scale_detection_test.png'
         plt.savefig(debug_file, dpi=150, bbox_inches='tight')
         plt.close()
         
         if verbose:
-            print(f"   💾 Scale debug image saved: {debug_file.name}")
+            print(f"   💾 Scale debug image saved: {debug_file}")
             
     except Exception as e:
         if verbose:
@@ -396,12 +435,13 @@ def test_enhanced_fiber_detection_with_debug(image, debug_dir, scale_factor=1.0,
             plt.ioff()  # Turn off interactive mode
             visualize_fiber_type_analysis(image, analysis_data, figsize=(20, 12))
             
+            # FIXED: Save to centralized debug directory
             debug_file = debug_dir / 'enhanced_fiber_detection_analysis.png'
             plt.savefig(debug_file, dpi=150, bbox_inches='tight')
             plt.close()
             
             if verbose:
-                print(f"   💾 Enhanced debug image saved: {debug_file.name}")
+                print(f"   💾 Enhanced debug image saved: {debug_file}")
         except Exception as viz_error:
             if verbose:
                 print(f"   ⚠️ Could not save enhanced debug visualization: {viz_error}")
@@ -501,12 +541,13 @@ def test_enhanced_porosity_analysis_with_debug(image, fiber_mask, scale_factor, 
                 plt.ioff()  # Turn off interactive mode
                 visualize_enhanced_porosity_results(image, result, figsize=(20, 12))
                 
+                # FIXED: Save to centralized debug directory
                 debug_file = debug_dir / 'enhanced_porosity_analysis.png'
                 plt.savefig(debug_file, dpi=150, bbox_inches='tight')
                 plt.close()
                 
                 if verbose:
-                    print(f"   💾 Enhanced debug image saved: {debug_file.name}")
+                    print(f"   💾 Enhanced debug image saved: {debug_file}")
             except Exception as viz_error:
                 if verbose:
                     print(f"   ⚠️ Could not save enhanced debug visualization: {viz_error}")
@@ -543,14 +584,16 @@ def test_enhanced_multiprocessing_analyzer(sample_images, verbose=True):
         
         if verbose:
             print(f"   Testing enhanced batch analysis: {len(sample_images)} images")
+            print(f"   Results will automatically go to centralized results/ folder")
         
-        # Run enhanced multiprocessing analyzer
+        # FIXED: Run enhanced multiprocessing analyzer (no --output needed for centralized results)
         cmd = [
             sys.executable, 
             "multiprocessing_analyzer.py", 
             "--batch", "sample_images",
             "--max-images", "3",  # Limit for testing
             "--processes", "2"    # Use fewer processes for testing
+            # Note: No --output specified - will use centralized results automatically
         ]
         
         start_time = time.time()
@@ -561,19 +604,25 @@ def test_enhanced_multiprocessing_analyzer(sample_images, verbose=True):
             if verbose:
                 print(f"✅ Enhanced batch analysis successful!")
                 print(f"   Processing time: {processing_time:.2f}s")
-                print(f"   Enhanced Excel report should be created with oval fitting data")
-                print(f"   Check enhanced_parallel_results/ for output files")
+                print(f"   Enhanced Excel report created with oval fitting data")
                 
-                # Look for created files
-                results_dir = Path("enhanced_parallel_results")
+                # FIXED: Look for created files in centralized results location
+                results_dir = MULTIPROCESSING_DIR
+                
                 if results_dir.exists():
                     excel_files = list(results_dir.glob("ENHANCED_OVAL_ANALYSIS_*.xlsx"))
                     json_files = list(results_dir.glob("enhanced_batch_results_*.json"))
                     
                     if excel_files:
-                        print(f"   📊 Enhanced Excel report created: {excel_files[0].name}")
+                        print(f"   📊 Enhanced Excel report: {excel_files[0].name}")
+                        print(f"   📁 Location: {excel_files[0].parent}")
                     if json_files:
-                        print(f"   📄 JSON results created: {json_files[0].name}")
+                        print(f"   📄 JSON results: {json_files[0].name}")
+                        print(f"   📁 Location: {json_files[0].parent}")
+                    
+                    print(f"   💾 All results saved to centralized location: {results_dir}")
+                else:
+                    print(f"   ⚠️ Results directory not found: {results_dir}")
         else:
             if verbose:
                 print(f"❌ Enhanced batch analysis failed!")
@@ -585,7 +634,8 @@ def test_enhanced_multiprocessing_analyzer(sample_images, verbose=True):
         return True, {
             'batch_analysis_success': result.returncode == 0,
             'batch_analysis_time': processing_time,
-            'output_generated': result.returncode == 0
+            'output_generated': result.returncode == 0,
+            'centralized_results_used': RESULTS_CONFIGURED
         }
         
     except subprocess.TimeoutExpired:
@@ -602,6 +652,7 @@ def run_enhanced_individual_module_tests(sample_image, debug_dir):
     """Run tests on enhanced individual modules with debug output"""
     print(f"\n🧪 ENHANCED INDIVIDUAL MODULE TESTS WITH OVAL FITTING")
     print(f"Image: {sample_image.name}")
+    print(f"Debug output: {debug_dir}")
     print("=" * 80)
     
     results = {}
@@ -687,8 +738,19 @@ def run_enhanced_multiprocessing_test(sample_images):
     return {'enhanced_multiprocessing_analyzer': enhanced_multiprocessing_success}
 
 def main():
-    """Main enhanced test runner"""
-    print(f"\n🚀 Starting Enhanced Real Image Tests with Oval Fitting")
+    """Main enhanced test runner with centralized results management"""
+    print(f"\n🚀 Starting Enhanced Tests with Centralized Results Management")
+    
+    # Show results configuration info
+    if RESULTS_CONFIGURED:
+        try:
+            info = get_results_info()
+            print(f"\n📁 Results Configuration:")
+            print(f"   Base directory: {info['base_directory']}")
+            print(f"   Directories initialized: {info['directories_created']}")
+            print(f"   System status: {info['initialized']}")
+        except:
+            pass
     
     # Test imports
     test_imports()
@@ -699,7 +761,7 @@ def main():
         print("\n❌ Cannot run enhanced tests without sample images!")
         return False
     
-    # Create debug output directory
+    # Create debug output directory using centralized config
     debug_dir = create_debug_output_dir()
     
     # Run enhanced individual module tests with debug output on FIRST image
@@ -724,25 +786,40 @@ def main():
             status = "❌ FAIL"
         print(f"{test_name.replace('_', ' ').title()}: {status}")
     
+    # Results information
+    print(f"\n📁 RESULTS SAVED TO CENTRALIZED LOCATIONS:")
+    if RESULTS_CONFIGURED:
+        print(f"   ✅ All results managed by centralized results_config.py")
+        print(f"   🧪 Test session: {debug_dir}")
+        print(f"   📊 Multiprocessing results: {MULTIPROCESSING_DIR}")
+        print(f"   📁 Base results directory: {TEST_RESULTS_DIR.parent}")
+        print(f"\n   Run the multiprocessing analyzer with --show-results-info for full structure")
+    else:
+        print(f"   ⚠️ Using fallback results locations")
+        print(f"   🧪 Test outputs: {debug_dir}")
+        print(f"   📊 Multiprocessing: {MULTIPROCESSING_DIR}")
+    
     # Count actual failures (not partial successes)
     actual_failures = sum(1 for result in all_results.values() if result is False)
     overall_success = actual_failures == 0
     
     print(f"\nOverall Result: {'🎉 ALL ENHANCED SYSTEMS WORKING!' if overall_success else '⚠️ SOME ENHANCED FEATURES HAVE ISSUES'}")
-    print(f"Enhanced debug outputs saved to: {debug_dir}")
     
     if multiprocessing_results.get('enhanced_multiprocessing_analyzer', False):
-        print(f"Enhanced multiprocessing analyzer working (check enhanced_parallel_results/ for oval fitting outputs)")
+        print(f"✅ Enhanced multiprocessing analyzer working (centralized results)")
+        print(f"   Check {MULTIPROCESSING_DIR} for oval fitting outputs")
     
     if overall_success:
-        print("\n✅ Your Enhanced SEM Fiber Analysis System with Oval Fitting is working correctly!")
-        print("   Individual modules: Generate debug images with oval fitting visualizations")
-        print("   Enhanced multiprocessing: Comprehensive Excel reports with 100+ measurements")
-        print("   Oval fitting: Precise diameter measurements and enhanced analysis")
-        print("   Scale detection: Works same way as before but integrates with oval data")
+        print("\n🎉 Your Enhanced SEM Fiber Analysis System is working correctly!")
+        print("   🔍 Individual modules: Enhanced with oval fitting capabilities")
+        print("   📊 Multiprocessing analyzer: Comprehensive Excel reports with 100+ measurements")
+        print("   💾 Results management: Centralized in results/ folder structure")
+        print("   🎯 Oval fitting: Precise diameter measurements for advanced analysis")
+        print("   📁 Output organization: All results properly categorized and timestamped")
     else:
         print("\n🔧 Some enhanced tests failed - check the output above for details")
-        print("   Basic functionality may still work, but oval fitting features may be limited")
+        print("   Basic functionality may still work, but enhanced features may be limited")
+        print("   Debug images and logs are saved in the centralized results structure")
     
     return overall_success
 
