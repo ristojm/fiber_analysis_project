@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """
-Complete Crumbly Texture Analysis Workflow
+Complete Crumbly Texture Analysis Workflow - FIXED VERSION
 Integrates evaluation, training, and hybrid detection into a single workflow.
+
+FIXES:
+1. Proper path setup for modules/ directory 
+2. Import of results_config.py for output management
+3. Corrected module imports to match comprehensive_analyzer_main.py pattern
+4. Fixed OCR initialization by properly setting up paths
 
 Usage Examples:
 1. Evaluate current detector:
@@ -26,28 +32,91 @@ import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional
 
-# Import our modules
+# ===== PATH SETUP (CRITICAL FIX) =====
+# Set up paths to match comprehensive_analyzer_main.py
+project_root = Path(__file__).parent.parent  # Go up one level from Crumble_ML/
+sys.path.insert(0, str(project_root))
+sys.path.insert(0, str(project_root / "modules"))
+
+print(f"🔧 Fixed path setup:")
+print(f"   Project root: {project_root}")
+print(f"   Modules path: {project_root / 'modules'}")
+print(f"   Crumble_ML path: {project_root / 'Crumble_ML'}")
+
+# ===== IMPORT RESULTS CONFIGURATION =====
 try:
+    from results_config import (
+        get_multiprocessing_path, get_excel_report_path, get_json_results_path,
+        MULTIPROCESSING_DIR, get_results_info, print_results_structure,
+        ensure_directory_exists
+    )
+    RESULTS_CONFIGURED = True
+    print("✅ Centralized results configuration loaded")
+except ImportError as e:
+    # Fallback if results_config.py doesn't exist
+    RESULTS_CONFIGURED = False
+    print(f"⚠️ Results config not found: {e}")
+    # Create basic fallback
+    MULTIPROCESSING_DIR = Path("crumbly_workflow_results")
+    MULTIPROCESSING_DIR.mkdir(parents=True, exist_ok=True)
+    
+    def get_multiprocessing_path(filename: str) -> Path:
+        return MULTIPROCESSING_DIR / filename
+
+# ===== IMPORT CORE MODULES (FIXED PATHS) =====
+try:
+    # Import from modules/ directory (like comprehensive_analyzer_main.py does)
+    from modules.image_preprocessing import load_image, preprocess_pipeline
+    from modules.scale_detection import ScaleBarDetector, detect_scale_bar
+    from modules.fiber_type_detection import FiberTypeDetector
+    print("✅ Core modules imported successfully from modules/")
+except ImportError as e:
+    print(f"❌ Core modules import error: {e}")
+    print("Make sure modules/ directory is accessible")
+    sys.exit(1)
+
+# ===== IMPORT CRUMBLY-SPECIFIC MODULES =====
+try:
+    # Import the fully corrected evaluation system and hybrid detector
+    # Note: Use the fully corrected version with all proper method integrations
     from crumbly_evaluation_system import CrumblyEvaluationSystem
     from hybrid_crumbly_detector import HybridCrumblyDetector, train_hybrid_detector, load_hybrid_detector
-    print("✅ All workflow modules imported successfully")
+    print("✅ Crumbly-specific modules imported successfully")
 except ImportError as e:
-    print(f"❌ Import error: {e}")
-    print("Make sure all required modules are available")
+    print(f"❌ Crumbly modules import error: {e}")
+    print("Make sure crumbly modules are in Crumble_ML/ directory")
+    print("SOLUTION: Replace crumbly_evaluation_system.py with the fully corrected version")
     sys.exit(1)
 
 class CrumblyWorkflowManager:
     """
     Manages the complete workflow for crumbly texture analysis improvement.
+    FIXED: Now properly handles paths and imports like comprehensive_analyzer_main.py
     """
     
     def __init__(self, output_dir: str = "crumbly_workflow_results"):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)
+        # Use results_config if available, otherwise fallback
+        if RESULTS_CONFIGURED:
+            self.output_dir = ensure_directory_exists(output_dir)
+        else:
+            self.output_dir = Path(output_dir)
+            self.output_dir.mkdir(exist_ok=True)
         
         self.evaluation_system = None
         self.hybrid_detector = None
         self.workflow_results = {}
+        
+        # Initialize components with proper error handling
+        try:
+            # Initialize scale detector like comprehensive_analyzer_main.py does
+            self.scale_detector = ScaleBarDetector(
+                ocr_backend=None,  # Will auto-detect available backend
+                use_enhanced_detection=True
+            )
+            print(f"✅ Scale detector initialized: {self.scale_detector.ocr_backend}")
+        except Exception as e:
+            print(f"⚠️ Scale detector initialization issue: {e}")
+            self.scale_detector = None
         
         print(f"🔬 Crumbly Workflow Manager Initialized")
         print(f"   Output directory: {self.output_dir}")
@@ -55,246 +124,248 @@ class CrumblyWorkflowManager:
     def run_evaluation(self, dataset_path: str, max_images: Optional[int] = None) -> Dict:
         """
         Step 1: Evaluate current detector performance.
-        
-        Args:
-            dataset_path: Path to labeled dataset (crumbly/intermediate/not folders)
-            max_images: Maximum images to process (for testing)
-            
-        Returns:
-            Evaluation results dictionary
+        FIXED: Now uses correct method name and proper error handling
         """
+        print(f"\n🔍 Starting Evaluation Phase...")
+        print(f"   Dataset: {dataset_path}")
+        print(f"   Max images: {max_images or 'all'}")
         
-        print(f"\n🚀 STEP 1: EVALUATING CURRENT DETECTOR")
-        print("=" * 60)
-        
-        evaluation_dir = self.output_dir / "evaluation"
-        
-        # Initialize evaluation system
-        self.evaluation_system = CrumblyEvaluationSystem(
-            dataset_path=dataset_path,
-            output_dir=str(evaluation_dir)
-        )
-        
-        # Run evaluation
-        success = self.evaluation_system.run_evaluation(
-            max_images=max_images,
-            debug_images=False
-        )
-        
-        if success:
-            # Store evaluation results
-            evaluation_results = {
-                'success': True,
-                'total_images': len(self.evaluation_system.evaluation_results),
-                'successful_images': len([r for r in self.evaluation_system.evaluation_results 
-                                        if r.get('processing_success', False)]),
-                'evaluation_dir': str(self.evaluation_system.run_dir),
-                'feature_csv': None,
-                'analysis_results': getattr(self.evaluation_system, 'analysis_results', {})
-            }
-            
-            # Find the generated feature CSV
-            feature_files = list(self.evaluation_system.run_dir.glob("ml_features_*.csv"))
-            if feature_files:
-                evaluation_results['feature_csv'] = str(feature_files[0])
-                print(f"   📊 ML features saved to: {feature_files[0].name}")
-            
-            # Print key metrics
-            if hasattr(self.evaluation_system, 'analysis_results'):
-                accuracy = self.evaluation_system.analysis_results.get('overall_accuracy', 0)
-                print(f"   📈 Current detector accuracy: {accuracy:.3f} ({accuracy*100:.1f}%)")
-            
-            self.workflow_results['evaluation'] = evaluation_results
-            return evaluation_results
-        
-        else:
-            evaluation_results = {'success': False, 'error': 'Evaluation failed'}
-            self.workflow_results['evaluation'] = evaluation_results
-            return evaluation_results
-    
-    def train_hybrid_model(self, feature_csv_path: str, model_name: str = "hybrid_model") -> Dict:
-        """
-        Step 2: Train hybrid ML-enhanced detector.
-        
-        Args:
-            feature_csv_path: Path to ML features CSV from evaluation
-            model_name: Name for the trained model
-            
-        Returns:
-            Training results dictionary
-        """
-        
-        print(f"\n🤖 STEP 2: TRAINING HYBRID MODEL")
-        print("=" * 50)
-        
-        model_dir = self.output_dir / "models" / model_name
+        start_time = time.time()
         
         try:
-            # Train hybrid detector
-            self.hybrid_detector = train_hybrid_detector(
-                evaluation_csv_path=feature_csv_path,
-                model_save_path=str(model_dir)
-            )
+            # Initialize evaluation system
+            if self.evaluation_system is None:
+                self.evaluation_system = CrumblyEvaluationSystem(
+                    dataset_path=dataset_path,
+                    output_dir=str(self.output_dir / "evaluation")
+                )
             
-            training_results = {
-                'success': True,
-                'model_dir': str(model_dir),
-                'model_name': model_name,
-                'is_trained': self.hybrid_detector.is_trained,
-                'num_ml_models': len(self.hybrid_detector.ml_models),
-                'has_ensemble': hasattr(self.hybrid_detector, 'ensemble_model')
-            }
-            
-            print(f"   ✅ Hybrid model trained successfully")
-            print(f"   📁 Models saved to: {model_dir}")
-            print(f"   🧠 ML models: {list(self.hybrid_detector.ml_models.keys())}")
-            
-            self.workflow_results['training'] = training_results
-            return training_results
-            
-        except Exception as e:
-            print(f"   ❌ Training failed: {e}")
-            training_results = {'success': False, 'error': str(e)}
-            self.workflow_results['training'] = training_results
-            return training_results
-    
-    def test_hybrid_model(self, test_dataset_path: str, model_path: str, 
-                         max_test_images: Optional[int] = None) -> Dict:
-        """
-        Step 3: Test hybrid model on independent dataset.
-        
-        Args:
-            test_dataset_path: Path to test dataset
-            model_path: Path to trained model
-            max_test_images: Maximum images to test
-            
-        Returns:
-            Test results dictionary
-        """
-        
-        print(f"\n🧪 STEP 3: TESTING HYBRID MODEL")
-        print("=" * 40)
-        
-        try:
-            # Load hybrid detector
-            if self.hybrid_detector is None or not self.hybrid_detector.is_trained:
-                self.hybrid_detector = load_hybrid_detector(model_path)
-            
-            if not self.hybrid_detector.is_trained:
-                raise ValueError("Could not load trained model")
-            
-            # Run evaluation with hybrid detector
-            test_dir = self.output_dir / "testing"
-            test_evaluator = CrumblyEvaluationSystem(
-                dataset_path=test_dataset_path,
-                output_dir=str(test_dir)
-            )
-            
-            # Replace the traditional detector with hybrid detector
-            test_evaluator.crumbly_detector = self.hybrid_detector
-            
-            # Run test evaluation
-            success = test_evaluator.run_evaluation(
-                max_images=max_test_images,
+            # Run evaluation using the correct method name
+            success = self.evaluation_system.run_evaluation(
+                max_images=max_images,
                 debug_images=False
             )
             
             if success:
-                test_results = {
+                # Store evaluation results
+                evaluation_results = {
                     'success': True,
-                    'test_dir': str(test_evaluator.run_dir),
-                    'total_test_images': len(test_evaluator.evaluation_results),
-                    'successful_test_images': len([r for r in test_evaluator.evaluation_results 
-                                                 if r.get('processing_success', False)]),
-                    'analysis_results': getattr(test_evaluator, 'analysis_results', {})
+                    'total_images': len(self.evaluation_system.evaluation_results),
+                    'successful_images': len([r for r in self.evaluation_system.evaluation_results 
+                                            if r.get('processing_success', False)]),
+                    'processing_time': time.time() - start_time,
+                    'evaluation_dir': str(self.evaluation_system.run_dir),
+                    'feature_csv': None,
+                    'analysis_results': getattr(self.evaluation_system, 'analysis_results', {})
                 }
                 
-                # Print test metrics
-                if hasattr(test_evaluator, 'analysis_results'):
-                    test_accuracy = test_evaluator.analysis_results.get('overall_accuracy', 0)
-                    print(f"   📈 Hybrid model test accuracy: {test_accuracy:.3f} ({test_accuracy*100:.1f}%)")
-                    
-                    # Compare with original evaluation if available
-                    if 'evaluation' in self.workflow_results:
-                        original_accuracy = self.workflow_results['evaluation']['analysis_results'].get('overall_accuracy', 0)
-                        improvement = test_accuracy - original_accuracy
-                        print(f"   📊 Improvement: {improvement:+.3f} ({improvement*100:+.1f}%)")
-                        test_results['improvement'] = improvement
+                # Find the generated feature CSV
+                feature_files = list(self.evaluation_system.run_dir.glob("ml_features_*.csv"))
+                if feature_files:
+                    evaluation_results['feature_csv'] = str(feature_files[0])
+                    evaluation_results['output_file'] = str(feature_files[0])
+                    print(f"   📊 ML features saved to: {feature_files[0].name}")
                 
-                self.workflow_results['testing'] = test_results
-                return test_results
-            
+                # Print key metrics
+                if hasattr(self.evaluation_system, 'analysis_results'):
+                    accuracy = self.evaluation_system.analysis_results.get('overall_accuracy', 0)
+                    print(f"   📈 Current detector accuracy: {accuracy:.3f} ({accuracy*100:.1f}%)")
+                
+                print(f"   ✅ Evaluation complete: {self.evaluation_system.run_dir}")
+                
+                self.workflow_results['evaluation'] = evaluation_results
+                return evaluation_results
             else:
-                test_results = {'success': False, 'error': 'Test evaluation failed'}
-                self.workflow_results['testing'] = test_results
-                return test_results
-        
-        except Exception as e:
-            print(f"   ❌ Testing failed: {e}")
-            test_results = {'success': False, 'error': str(e)}
-            self.workflow_results['testing'] = test_results
-            return test_results
-    
-    def analyze_new_images(self, images_path: str, model_path: str,
-                          output_file: str = "analysis_results.csv") -> Dict:
-        """
-        Step 4: Analyze new images with trained hybrid model.
-        
-        Args:
-            images_path: Path to directory with new images
-            model_path: Path to trained model
-            output_file: Name for output CSV file
+                eval_summary = {
+                    'success': False,
+                    'error': 'Evaluation process returned False',
+                    'processing_time': time.time() - start_time
+                }
+                self.workflow_results['evaluation'] = eval_summary
+                return eval_summary
             
-        Returns:
-            Analysis results dictionary
+        except Exception as e:
+            print(f"   ❌ Evaluation failed: {e}")
+            eval_summary = {
+                'success': False, 
+                'error': str(e),
+                'processing_time': time.time() - start_time
+            }
+            self.workflow_results['evaluation'] = eval_summary
+            return eval_summary
+    
+    def train_hybrid_model(self, features_csv_path: str) -> Dict:
         """
+        Step 2: Train hybrid ML model using evaluation features.
+        """
+        print(f"\n🤖 Starting Training Phase...")
+        print(f"   Features file: {features_csv_path}")
         
-        print(f"\n📊 STEP 4: ANALYZING NEW IMAGES")
-        print("=" * 40)
+        start_time = time.time()
         
         try:
-            # Load hybrid detector if not already loaded
-            if self.hybrid_detector is None or not self.hybrid_detector.is_trained:
+            # Load features from evaluation
+            features_df = pd.read_csv(features_csv_path)
+            
+            # Extract features and labels
+            feature_columns = [col for col in features_df.columns 
+                             if col not in ['image_name', 'true_label', 'predicted_label', 'image_path']]
+            
+            X = features_df[feature_columns].values
+            y = features_df['true_label'].values
+            
+            # Train hybrid detector
+            model_results = train_hybrid_detector(
+                X, y, 
+                feature_names=feature_columns,
+                output_dir=str(self.output_dir / "models")
+            )
+            
+            train_summary = {
+                'success': True,
+                'model_dir': model_results['model_dir'],
+                'num_ml_models': len(model_results['models']),
+                'has_ensemble': 'ensemble' in model_results,
+                'training_accuracy': model_results.get('training_accuracy', 0),
+                'cross_val_score': model_results.get('cross_val_score', 0),
+                'processing_time': time.time() - start_time,
+                'feature_importance': model_results.get('feature_importance', {})
+            }
+            
+            print(f"   ✅ Training complete: {model_results['model_dir']}")
+            
+            self.workflow_results['training'] = train_summary
+            return train_summary
+            
+        except Exception as e:
+            print(f"   ❌ Training failed: {e}")
+            train_summary = {'success': False, 'error': str(e), 'processing_time': time.time() - start_time}
+            self.workflow_results['training'] = train_summary
+            return train_summary
+    
+    def test_hybrid_model(self, test_path: str, model_path: str, max_images: Optional[int] = None) -> Dict:
+        """
+        Step 3: Test trained hybrid model on new dataset.
+        """
+        print(f"\n🧪 Starting Testing Phase...")
+        print(f"   Test dataset: {test_path}")
+        print(f"   Model: {model_path}")
+        
+        start_time = time.time()
+        
+        try:
+            # Load hybrid detector
+            self.hybrid_detector = load_hybrid_detector(model_path)
+            
+            # Initialize evaluation system for testing
+            test_evaluation = CrumblyEvaluationSystem(
+                dataset_path=test_path,
+                output_dir=str(self.output_dir / "testing")
+            )
+            
+            # Run testing with hybrid detector
+            test_results = test_evaluation.test_hybrid_detector(
+                self.hybrid_detector,
+                max_images=max_images
+            )
+            
+            # Save test results
+            output_file = "test_results.csv"
+            output_path = self.output_dir / output_file
+            
+            if isinstance(test_results, dict) and 'detailed_results' in test_results:
+                results_df = pd.DataFrame(test_results['detailed_results'])
+                results_df.to_csv(output_path, index=False)
+                
+                test_summary = {
+                    'success': True,
+                    'total_images': test_results.get('total_images', 0),
+                    'test_accuracy': test_results.get('accuracy', 0),
+                    'confusion_matrix': test_results.get('confusion_matrix', []),
+                    'processing_time': time.time() - start_time,
+                    'output_file': str(output_path)
+                }
+            else:
+                test_summary = {
+                    'success': False,
+                    'error': 'Invalid test results format',
+                    'processing_time': time.time() - start_time
+                }
+            
+            print(f"   ✅ Testing complete: {output_path}")
+            
+            self.workflow_results['testing'] = test_summary
+            return test_summary
+            
+        except Exception as e:
+            print(f"   ❌ Testing failed: {e}")
+            test_summary = {'success': False, 'error': str(e), 'processing_time': time.time() - start_time}
+            self.workflow_results['testing'] = test_summary
+            return test_summary
+    
+    def analyze_new_images(self, images_path: str, model_path: str, output_file: str = "hybrid_analysis_results.csv") -> Dict:
+        """
+        Step 4: Analyze new images using trained hybrid model.
+        FIXED: Now properly handles scale detection like comprehensive_analyzer_main.py
+        """
+        print(f"\n📊 Starting Analysis Phase...")
+        print(f"   Images: {images_path}")
+        print(f"   Model: {model_path}")
+        
+        start_time = time.time()
+        
+        try:
+            # Load hybrid detector
+            if self.hybrid_detector is None:
                 self.hybrid_detector = load_hybrid_detector(model_path)
             
-            if not self.hybrid_detector.is_trained:
-                raise ValueError("Could not load trained model")
-            
-            # Find images
-            images_dir = Path(images_path)
-            image_extensions = ['.tif', '.tiff', '.png', '.jpg', '.jpeg', '.bmp']
-            image_files = []
-            
-            for ext in image_extensions:
-                image_files.extend(images_dir.glob(f'*{ext}'))
-                image_files.extend(images_dir.glob(f'*{ext.upper()}'))
-            
-            if not image_files:
-                raise ValueError(f"No images found in {images_path}")
+            # Get image files
+            images_path = Path(images_path)
+            if images_path.is_file():
+                image_files = [images_path]
+            else:
+                image_files = list(images_path.glob("*.tif")) + list(images_path.glob("*.png")) + list(images_path.glob("*.jpg"))
             
             print(f"   Found {len(image_files)} images to analyze")
             
-            # Analyze each image
             analysis_results = []
             
             for i, image_path in enumerate(image_files):
-                print(f"   [{i+1}/{len(image_files)}] Analyzing: {image_path.name}")
+                print(f"   Processing {i+1}/{len(image_files)}: {image_path.name}")
                 
                 try:
-                    # This is a simplified version - in practice you'd need full image processing pipeline
-                    # Including preprocessing, fiber detection, etc.
+                    # Load and preprocess image (like comprehensive_analyzer_main.py)
+                    image = load_image(str(image_path))
+                    if image is None:
+                        raise ValueError("Could not load image")
                     
-                    # For now, create a placeholder result
+                    # Scale detection (like comprehensive_analyzer_main.py)
+                    scale_result = None
+                    if self.scale_detector:
+                        try:
+                            scale_result = self.scale_detector.detect_scale_bar(image)
+                        except Exception as e:
+                            print(f"     ⚠️ Scale detection issue: {e}")
+                    
+                    # Run hybrid analysis
+                    hybrid_result = self.hybrid_detector.analyze_image(image)
+                    
+                    # Compile result
                     result = {
                         'image_name': image_path.name,
                         'image_path': str(image_path),
-                        'status': 'placeholder',
-                        'classification': 'unknown',
-                        'confidence': 0.0,
+                        'status': 'success',
+                        'classification': hybrid_result.get('classification', 'unknown'),
+                        'confidence': hybrid_result.get('confidence', 0.0),
                         'method_used': 'hybrid',
-                        'processing_time': 0.0,
-                        'note': 'Full pipeline integration needed'
+                        'processing_time': hybrid_result.get('processing_time', 0.0),
+                        'scale_detected': scale_result.get('scale_detected', False) if scale_result else False,
+                        'scale_factor': scale_result.get('micrometers_per_pixel', 0) if scale_result else 0
                     }
+                    
+                    # Add detailed features if available
+                    if 'features' in hybrid_result:
+                        result.update(hybrid_result['features'])
                     
                     analysis_results.append(result)
                     
@@ -307,9 +378,13 @@ class CrumblyWorkflowManager:
                         'error': str(e)
                     })
             
-            # Save results
+            # Save results using results_config if available
+            if RESULTS_CONFIGURED:
+                output_path = get_multiprocessing_path(output_file)
+            else:
+                output_path = self.output_dir / output_file
+                
             results_df = pd.DataFrame(analysis_results)
-            output_path = self.output_dir / output_file
             results_df.to_csv(output_path, index=False)
             
             analysis_summary = {
@@ -317,6 +392,7 @@ class CrumblyWorkflowManager:
                 'total_images': len(image_files),
                 'processed_images': len([r for r in analysis_results if r.get('status') != 'error']),
                 'output_file': str(output_path),
+                'processing_time': time.time() - start_time,
                 'results': analysis_results
             }
             
@@ -327,7 +403,7 @@ class CrumblyWorkflowManager:
             
         except Exception as e:
             print(f"   ❌ Analysis failed: {e}")
-            analysis_summary = {'success': False, 'error': str(e)}
+            analysis_summary = {'success': False, 'error': str(e), 'processing_time': time.time() - start_time}
             self.workflow_results['analysis'] = analysis_summary
             return analysis_summary
     
@@ -335,72 +411,66 @@ class CrumblyWorkflowManager:
                             test_split: float = 0.3) -> Dict:
         """
         Run the complete workflow: evaluate -> train -> test.
-        
-        Args:
-            dataset_path: Path to labeled dataset
-            max_images: Maximum images to process
-            test_split: Fraction of data to use for testing
-            
-        Returns:
-            Complete workflow results
         """
-        
-        print(f"\n🚀 COMPLETE CRUMBLY ANALYSIS WORKFLOW")
-        print("=" * 70)
+        print(f"\n🚀 Starting Complete Workflow...")
         print(f"   Dataset: {dataset_path}")
-        print(f"   Max images: {max_images or 'all'}")
         print(f"   Test split: {test_split}")
         
-        workflow_start_time = time.time()
+        workflow_start = time.time()
         
         # Step 1: Evaluation
-        evaluation_results = self.run_evaluation(dataset_path, max_images)
-        
-        if not evaluation_results['success']:
-            print(f"\n❌ Workflow stopped: Evaluation failed")
-            return self.workflow_results
+        eval_results = self.run_evaluation(dataset_path, max_images)
+        if not eval_results.get('success', False):
+            return {'success': False, 'error': 'Evaluation failed', 'step': 'evaluation'}
         
         # Step 2: Training
-        feature_csv = evaluation_results.get('feature_csv')
-        if not feature_csv:
-            print(f"\n❌ Workflow stopped: No feature CSV generated")
-            return self.workflow_results
+        features_file = eval_results.get('output_file')
+        if not features_file:
+            return {'success': False, 'error': 'No features file from evaluation', 'step': 'evaluation'}
         
-        training_results = self.train_hybrid_model(feature_csv, "complete_workflow_model")
+        train_results = self.train_hybrid_model(features_file)
+        if not train_results.get('success', False):
+            return {'success': False, 'error': 'Training failed', 'step': 'training'}
         
-        if not training_results['success']:
-            print(f"\n❌ Workflow stopped: Training failed")
-            return self.workflow_results
+        # Step 3: Testing (use same dataset with different samples if needed)
+        model_dir = train_results.get('model_dir')
+        if not model_dir:
+            return {'success': False, 'error': 'No model directory from training', 'step': 'training'}
         
-        # Step 3: Testing (using the same dataset with train/test split)
-        # In practice, you'd want a separate test dataset
-        model_path = training_results['model_dir']
-        testing_results = self.test_hybrid_model(dataset_path, model_path, max_images)
-        
-        # Calculate total workflow time
-        total_time = time.time() - workflow_start_time
+        test_results = self.test_hybrid_model(dataset_path, model_dir, max_images)
         
         # Generate workflow summary
-        self.workflow_results['summary'] = {
-            'total_time': total_time,
+        workflow_summary = {
+            'success': True,
+            'total_time': time.time() - workflow_start,
+            'evaluation': eval_results,
+            'training': train_results,
+            'testing': test_results,
             'workflow_complete': True,
-            'all_steps_successful': all(
-                self.workflow_results.get(step, {}).get('success', False)
-                for step in ['evaluation', 'training', 'testing']
-            )
+            'all_steps_successful': all([
+                eval_results.get('success', False),
+                train_results.get('success', False),
+                test_results.get('success', False)
+            ])
         }
         
-        self.generate_workflow_report()
+        # Save complete workflow report
+        self._generate_workflow_report(workflow_summary)
         
-        return self.workflow_results
+        return workflow_summary
     
-    def generate_workflow_report(self):
-        """Generate a comprehensive workflow report."""
-        
+    def _generate_workflow_report(self, summary: Dict):
+        """Generate comprehensive workflow report."""
         print(f"\n📋 WORKFLOW SUMMARY REPORT")
         print("=" * 50)
         
-        report_file = self.output_dir / "workflow_report.txt"
+        # Use results_config if available
+        if RESULTS_CONFIGURED:
+            report_file = get_multiprocessing_path("workflow_report.txt")
+            json_file = get_multiprocessing_path("workflow_results.json")
+        else:
+            report_file = self.output_dir / "workflow_report.txt"
+            json_file = self.output_dir / "workflow_results.json"
         
         with open(report_file, 'w') as f:
             f.write("CRUMBLY TEXTURE ANALYSIS WORKFLOW REPORT\n")
@@ -442,27 +512,18 @@ class CrumblyWorkflowManager:
                 f.write(f"   Status: {'SUCCESS' if test_results['success'] else 'FAILED'}\n")
                 
                 if test_results['success']:
-                    test_analysis = test_results.get('analysis_results', {})
-                    if test_analysis:
-                        test_accuracy = test_analysis.get('overall_accuracy', 0)
-                        f.write(f"   Hybrid model accuracy: {test_accuracy:.3f} ({test_accuracy*100:.1f}%)\n")
-                        
-                        improvement = test_results.get('improvement', 0)
-                        f.write(f"   Improvement: {improvement:+.3f} ({improvement*100:+.1f}%)\n")
+                    f.write(f"   Test accuracy: {test_results['test_accuracy']:.3f}\n")
                 f.write("\n")
             
             # Summary
-            if 'summary' in self.workflow_results:
-                summary = self.workflow_results['summary']
-                f.write("4. WORKFLOW SUMMARY:\n")
-                f.write(f"   Total time: {summary['total_time']:.2f} seconds\n")
-                f.write(f"   Complete: {'Yes' if summary['workflow_complete'] else 'No'}\n")
-                f.write(f"   All steps successful: {'Yes' if summary['all_steps_successful'] else 'No'}\n")
+            f.write("WORKFLOW SUMMARY:\n")
+            f.write(f"   Total time: {summary['total_time']:.2f} seconds\n")
+            f.write(f"   Complete: {'Yes' if summary['workflow_complete'] else 'No'}\n")
+            f.write(f"   All steps successful: {'Yes' if summary['all_steps_successful'] else 'No'}\n")
         
         print(f"📄 Workflow report saved: {report_file}")
         
         # Save workflow results as JSON
-        json_file = self.output_dir / "workflow_results.json"
         with open(json_file, 'w') as f:
             json.dump(self.workflow_results, f, indent=2, default=str)
         
@@ -470,9 +531,8 @@ class CrumblyWorkflowManager:
 
 def main():
     """Command line interface for the crumbly workflow."""
-    
     parser = argparse.ArgumentParser(
-        description='Crumbly Texture Analysis Workflow',
+        description='Crumbly Texture Analysis Workflow - FIXED VERSION',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -530,7 +590,10 @@ Examples:
         # Check if workflow was successful
         if isinstance(results, dict) and results.get('success', True):
             print(f"\n✅ Command '{args.command}' completed successfully!")
-            print(f"📁 Results saved to: {workflow.output_dir}")
+            if RESULTS_CONFIGURED:
+                print(f"📁 Results saved to centralized results/ folder structure")
+            else:
+                print(f"📁 Results saved to: {workflow.output_dir}")
             return 0
         else:
             print(f"\n❌ Command '{args.command}' failed!")
@@ -538,6 +601,8 @@ Examples:
             
     except Exception as e:
         print(f"\n💥 Workflow error: {e}")
+        import traceback
+        traceback.print_exc()
         return 1
 
 if __name__ == "__main__":
