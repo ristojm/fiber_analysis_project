@@ -42,7 +42,7 @@ try:
     from modules.scale_detection import detect_scale_bar
     from modules.fiber_type_detection import FiberTypeDetector
     # Import your crumbly detector (assuming it's in the same directory or path)
-    from paste import CrumblyDetector  # Replace with actual import path
+    from crumbly_detection import CrumblyDetector  # Replace with actual import path
     print("✅ Successfully imported all modules")
 except ImportError as e:
     print(f"❌ Import error: {e}")
