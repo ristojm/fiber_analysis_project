@@ -35,7 +35,7 @@ def test_porosity_analysis():
             porosity_available = False
         
         # Test on hollow fiber (best candidate for porosity analysis)
-        img_name = "hollow_fiber_sample.jpg"
+        img_name = "14a_001.jpg"
         img_path = project_root / "sample_images" / img_name
         
         if not img_path.exists():

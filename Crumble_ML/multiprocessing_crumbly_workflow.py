@@ -361,16 +361,18 @@ def process_single_image_worker(worker_args: Dict) -> Dict:
             result['model_type'] = 'traditional'
         
                 # Crumbly texture analysis
-        # REPLACE the crumbly analysis section in process_single_image_worker() function
-# Around line 180-220 in multiprocessing_crumbly_workflow.py
 
-        # Crumbly texture analysis
+       # Crumbly texture analysis (FIXED - Pass porosity results)
         if MODULES_LOADED['crumbly_detection']:
             try:
                 fiber_mask_bool = fiber_mask > 127
                 
+                # NEW: Pass porosity analysis results to crumbly detector
+                porosity_data = result.get('porosity_analysis', {})
+                
                 crumbly_result = crumbly_detector.analyze_crumbly_texture(
-                    preprocessed, fiber_mask_bool, None, scale_factor, debug=False
+                    preprocessed, fiber_mask_bool, None, scale_factor, 
+                    debug=False, porosity_data=porosity_data  # ADD THIS
                 )
                 
                 if crumbly_result and 'classification' in crumbly_result:
@@ -651,10 +653,19 @@ class MultiprocessingCrumblyWorkflowManager:
                         elapsed = time.time() - start_time
                         eta = elapsed * (len(image_files) - completed) / completed if completed > 0 else 0
                         
+                        # Get porosity info for main progress line
+                        porosity_info = ""
+                        porosity_data = result.get('porosity_analysis', {})
+                        if porosity_data:
+                            porosity_metrics = porosity_data.get('porosity_metrics', {})
+                            total_porosity = porosity_metrics.get('total_porosity_percent', 0)
+                            pore_count = porosity_metrics.get('pore_count', 0)
+                            porosity_info = f"| Por: {total_porosity:.1f}% ({pore_count}p) "
+                        
                         print(f"{status} [{completed:3d}/{len(image_files)}] {progress:5.1f}% | "
                               f"{Path(image_path).name:<25} | "
                               f"Time: {result.get('total_processing_time', 0):5.2f}s | "
-                              f"{prediction_info} | "
+                              f"{prediction_info} {porosity_info}| "
                               f"ETA: {eta:5.0f}s")
                         
                     except Exception as e:

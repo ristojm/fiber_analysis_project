@@ -22,7 +22,7 @@ import warnings
 warnings.filterwarnings('ignore')
 
 # Add the project root to Python path for imports
-current_dir = Path(__file__).parent
+current_dir = Path(__file__).parent.parent
 project_root = current_dir.parent
 sys.path.insert(0, str(project_root))
 

@@ -59,11 +59,80 @@ class CrumblyDetector:
             'organized_porosity': 0.6          # Lower = less organized pores
         }
     
+    def _extract_pore_metrics_from_porosity_data(self, porosity_data: Dict) -> Dict:
+        """
+        Extract pore characteristics from main porosity analysis results.
+        Converts porosity data format to crumbly detector format.
+        """
+        try:
+            porosity_metrics = porosity_data.get('porosity_metrics', {})
+            
+            # Extract basic pore information
+            pore_count = porosity_metrics.get('pore_count', 0)
+            total_porosity = porosity_metrics.get('total_porosity_percent', 0)
+            avg_pore_size = porosity_metrics.get('average_pore_size_um2', 0)
+            
+            if pore_count > 0:
+                # Calculate derived metrics for crumbly analysis
+                # Assume organized pores if from main porosity detector
+                organized_porosity_score = min(1.0, total_porosity / 50.0)  # Scale 0-50% to 0-1
+                
+                # Estimate circularity (porosity detector finds good pores, so assume decent circularity)
+                estimated_circularity = 0.7  # Reasonable default for detected pores
+                
+                # Estimate smoothness based on detection success
+                estimated_smoothness = 0.6  # Detected pores are reasonably smooth
+                
+                # Calculate area-based metrics
+                mean_pore_area_um2 = avg_pore_size
+                
+                return {
+                    'pore_count': pore_count,
+                    'mean_pore_circularity': estimated_circularity,
+                    'mean_pore_edge_smoothness': estimated_smoothness,
+                    'organized_porosity_score': organized_porosity_score,
+                    'mean_pore_area_um2': mean_pore_area_um2,
+                    'total_pore_area_fraction': total_porosity / 100.0,
+                    'pore_circularity_consistency': 0.8,  # Assume good consistency
+                    'spatial_organization': 0.8,  # Assume organized if detected
+                    'pore_size_variation': 0.3,  # Assume moderate variation
+                    'source': 'main_porosity_analyzer'
+                }
+            else:
+                # No pores detected
+                return {
+                    'pore_count': 0,
+                    'mean_pore_circularity': 1.0,
+                    'mean_pore_edge_smoothness': 1.0,
+                    'organized_porosity_score': 1.0,
+                    'mean_pore_area_um2': 0,
+                    'total_pore_area_fraction': 0.0,
+                    'pore_circularity_consistency': 1.0,
+                    'spatial_organization': 1.0,
+                    'pore_size_variation': 0.0,
+                    'source': 'main_porosity_analyzer'
+                }
+                
+        except Exception as e:
+            print(f"   ⚠️ Error extracting pore metrics from porosity data: {e}")
+            # Return default metrics
+            return {
+                'pore_count': 0,
+                'mean_pore_circularity': 0.5,
+                'mean_pore_edge_smoothness': 0.5,
+                'organized_porosity_score': 0.5,
+                'mean_pore_area_um2': 0,
+                'total_pore_area_fraction': 0.0,
+                'error': str(e),
+                'source': 'error_fallback'
+            }
+
     def analyze_crumbly_texture(self, image: np.ndarray, 
                                fiber_mask: np.ndarray,
                                lumen_mask: Optional[np.ndarray] = None,
                                scale_factor: float = 1.0,
-                               debug: bool = False) -> Dict:
+                               debug: bool = False,
+                               porosity_data: Optional[Dict] = None) -> Dict:  # ADD THIS
         """
         Comprehensive crumbly texture analysis.
         
@@ -73,6 +142,7 @@ class CrumblyDetector:
             lumen_mask: Optional binary mask of lumen region
             scale_factor: Micrometers per pixel for real measurements
             debug: Enable debug visualizations
+            porosity_data: Optional porosity analysis results from main workflow
             
         Returns:
             Dictionary containing all texture metrics and classification
@@ -99,11 +169,21 @@ class CrumblyDetector:
         }
         
         try:
-            # 1. Porosity-Aware Pore Analysis (NEW - Critical for distinction)
-            if self.porosity_aware:
+           # 1. Porosity-Aware Pore Analysis (FIXED - Use main porosity results)
+            if self.porosity_aware and porosity_data:
+                # Use porosity results from main workflow
+                pore_metrics = self._extract_pore_metrics_from_porosity_data(porosity_data)
+                results['pore_metrics'] = pore_metrics
+                print(f"   ✅ Using main porosity results: {pore_metrics.get('pore_count', 0)} pores")
+            elif self.porosity_aware:
+                # Fallback to internal pore detection
                 pore_metrics = self._analyze_pore_characteristics(
                     fiber_region, wall_mask, scale_factor
                 )
+                results['pore_metrics'] = pore_metrics
+                print(f"   ⚠️ Using internal pore detection: {pore_metrics.get('pore_count', 0)} pores")
+            else:
+                pore_metrics = {}
                 results['pore_metrics'] = pore_metrics
             
             # 2. Boundary Analysis (Enhanced for porosity awareness)
