@@ -15,6 +15,9 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
+CRUMBLY_DEBUG = False  # Set to True for detailed debugging, False for clean output
+
+
 class CrumblyDetector:
     """
     Detects and quantifies crumbly texture in SEM fiber images.
@@ -1123,7 +1126,8 @@ class CrumblyDetector:
             # Normalize surface roughness (assuming typical range 0-50)
             normalized_roughness = min(1.0, surface_roughness / 30.0)
             
-            print(f"   🔍 Surface analysis: roughness={surface_roughness:.1f}, normalized={normalized_roughness:.3f}, variation={texture_variation:.1f}")
+            if CRUMBLY_DEBUG:
+                print(f"   🔍 Surface analysis: roughness={surface_roughness:.1f}, normalized={normalized_roughness:.3f}, variation={texture_variation:.1f}")
             
             # FIXED: More realistic thresholds for crumbly detection
             if normalized_roughness > 0.5 and texture_variation > 25:  # LOWERED from 0.7 and increased variation threshold
@@ -1212,51 +1216,52 @@ class CrumblyDetector:
                 confidence_factors.append(f"Intermediate texture: homogeneity={glcm_homogeneity:.2f}")
                 print(f"   ➡️ INTERMEDIATE: Mixed texture - score={intermediate_score:.3f}")
 
-            # DETAILED DEBUG: Print all the metric values that drive classification
-            print(f"\n🔬 DETAILED METRICS DEBUG:")
-            print(f"   PORE METRICS:")
-            print(f"     - pore_count: {pore_count}")
-            print(f"     - mean_pore_area: {mean_pore_area:.1f} μm²")
-            print(f"     - pore_circularity: {pore_circularity:.3f}")
-            print(f"     - pore_smoothness: {pore_smoothness:.3f}")
-            print(f"     - pore_organization: {pore_organization:.3f}")
-            
-            print(f"   WALL METRICS:")
-            print(f"     - wall_integrity: {wall_integrity:.3f}")
-            print(f"     - fragmentation_score: {fragmentation_score:.3f}")
-            print(f"     - thickness_consistency: {thickness_consistency:.3f}")
-            
-            print(f"   SURFACE METRICS:")
-            print(f"     - surface_roughness: {surface_roughness:.3f}")
-            print(f"     - normalized_roughness: {normalized_roughness:.3f}")
-            print(f"     - texture_variation: {texture_variation:.3f}")
-            
-            print(f"   BOUNDARY METRICS:")
-            if 'outer_boundary' in boundary_metrics:
-                outer = boundary_metrics['outer_boundary']
-                boundary_roughness = outer.get('roughness_index', 0.5)
-                fractal_dim = outer.get('fractal_dimension', 1.0)
-                print(f"     - boundary_roughness: {boundary_roughness:.3f}")
-                print(f"     - fractal_dimension: {fractal_dim:.3f}")
-            
-            print(f"   TEXTURE METRICS:")
-            print(f"     - lbp_entropy: {lbp_entropy:.3f}")
-            print(f"     - glcm_homogeneity: {glcm_homogeneity:.3f}")
-            print(f"     - edge_density: {edge_density:.3f}")
-            
-            # Show what conditions are being triggered
-            print(f"   CONDITION CHECKS:")
-            print(f"     - Low surface roughness (< 0.3): {normalized_roughness < 0.3} → adds to porous")
-            if 'outer_boundary' in boundary_metrics:
-                outer = boundary_metrics['outer_boundary']
-                boundary_roughness = outer.get('roughness_index', 0.5)
-                print(f"     - Low boundary roughness (< 0.3): {boundary_roughness < 0.3} → adds to porous")
-            print(f"     - High texture homogeneity (> 0.6) & low edge (< 0.4): {glcm_homogeneity > 0.6 and edge_density < 0.4} → adds to porous")
-            
-            print(f"   EVIDENCE ARRAYS BEFORE CALCULATION:")
-            print(f"     - crumbly_indicators: {crumbly_indicators}")
-            print(f"     - porous_indicators: {porous_indicators}")
-            print(f"     - intermediate_indicators: {intermediate_indicators}")
+            if CRUMBLY_DEBUG:
+                # DETAILED DEBUG: Print all the metric values that drive classification
+                print(f"\n🔬 DETAILED METRICS DEBUG:")
+                print(f"   PORE METRICS:")
+                print(f"     - pore_count: {pore_count}")
+                print(f"     - mean_pore_area: {mean_pore_area:.1f} μm²")
+                print(f"     - pore_circularity: {pore_circularity:.3f}")
+                print(f"     - pore_smoothness: {pore_smoothness:.3f}")
+                print(f"     - pore_organization: {pore_organization:.3f}")
+                
+                print(f"   WALL METRICS:")
+                print(f"     - wall_integrity: {wall_integrity:.3f}")
+                print(f"     - fragmentation_score: {fragmentation_score:.3f}")
+                print(f"     - thickness_consistency: {thickness_consistency:.3f}")
+                
+                print(f"   SURFACE METRICS:")
+                print(f"     - surface_roughness: {surface_roughness:.3f}")
+                print(f"     - normalized_roughness: {normalized_roughness:.3f}")
+                print(f"     - texture_variation: {texture_variation:.3f}")
+                
+                print(f"   BOUNDARY METRICS:")
+                if 'outer_boundary' in boundary_metrics:
+                    outer = boundary_metrics['outer_boundary']
+                    boundary_roughness = outer.get('roughness_index', 0.5)
+                    fractal_dim = outer.get('fractal_dimension', 1.0)
+                    print(f"     - boundary_roughness: {boundary_roughness:.3f}")
+                    print(f"     - fractal_dimension: {fractal_dim:.3f}")
+                
+                print(f"   TEXTURE METRICS:")
+                print(f"     - lbp_entropy: {lbp_entropy:.3f}")
+                print(f"     - glcm_homogeneity: {glcm_homogeneity:.3f}")
+                print(f"     - edge_density: {edge_density:.3f}")
+                
+                # Show what conditions are being triggered
+                print(f"   CONDITION CHECKS:")
+                print(f"     - Low surface roughness (< 0.3): {normalized_roughness < 0.3} → adds to porous")
+                if 'outer_boundary' in boundary_metrics:
+                    outer = boundary_metrics['outer_boundary']
+                    boundary_roughness = outer.get('roughness_index', 0.5)
+                    print(f"     - Low boundary roughness (< 0.3): {boundary_roughness < 0.3} → adds to porous")
+                print(f"     - High texture homogeneity (> 0.6) & low edge (< 0.4): {glcm_homogeneity > 0.6 and edge_density < 0.4} → adds to porous")
+                
+                print(f"   EVIDENCE ARRAYS BEFORE CALCULATION:")
+                print(f"     - crumbly_indicators: {crumbly_indicators}")
+                print(f"     - porous_indicators: {porous_indicators}")
+                print(f"     - intermediate_indicators: {intermediate_indicators}")
 
             # 6. CALCULATE SCORES AND CLASSIFY (FIXED LOGIC)
             

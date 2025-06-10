@@ -41,6 +41,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import psutil
 import os
 
+WORKFLOW_DEBUG = False  # Set to True for workflow debugging
+
 # ===== CROSS-PLATFORM TIMEOUT PROTECTION =====
 class TimeoutException(Exception):
     pass
@@ -204,8 +206,9 @@ def preprocess_image_for_worker(image):
 def fix_fiber_mask_extraction_worker(image, fiber_analysis_data):
     """Worker version of fiber mask extraction - FIXED to match comprehensive_analyzer_main.py"""
     
-    print(f"   🔧 Extracting fiber mask from analysis data...")
-    print(f"   📊 Analysis data keys: {list(fiber_analysis_data.keys()) if fiber_analysis_data else 'None'}")
+    if WORKFLOW_DEBUG == True:
+        print(f"   🔧 Extracting fiber mask from analysis data...")
+        print(f"   📊 Analysis data keys: {list(fiber_analysis_data.keys()) if fiber_analysis_data else 'None'}")
     
     # Get fiber mask from analysis data (direct format from classify_fiber_type)
     fiber_mask = fiber_analysis_data.get('fiber_mask') if fiber_analysis_data else None
