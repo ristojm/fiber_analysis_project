@@ -220,6 +220,7 @@ def process_single_image_worker(worker_args: Dict) -> Dict:
     
     image_info = worker_args['image_info']
     config = worker_args.get('config', {})
+    model_path = config.get('model_path', None)  # NEW: Get model path from config
     
     start_time = time.time()
     process_id = os.getpid()
@@ -234,7 +235,8 @@ def process_single_image_worker(worker_args: Dict) -> Dict:
         'prediction_confidence': 0.0,
         'crumbly_score': 0.5,
         'ml_features': {},
-        'total_processing_time': 0.0
+        'total_processing_time': 0.0,
+        'model_type': 'traditional'  # NEW: Track which model type was used
     }
     
     try:
@@ -270,62 +272,69 @@ def process_single_image_worker(worker_args: Dict) -> Dict:
                 scale_factor = scale_result.get('micrometers_per_pixel', 1.0)
             result['scale_detection'] = scale_result
         except Exception as e:
-            result['scale_detection'] = {'error': str(e), 'scale_detected': False}
+            result['scale_detection'] = {'error': str(e)}
+            scale_factor = 1.0
         
         # Fiber type detection
-        fiber_type = 'unknown'
-        fiber_analysis_data = None
         try:
             fiber_detector = FiberTypeDetector()
-            fiber_type_result, confidence, fiber_analysis_data = fiber_detector.classify_fiber_type(
-                preprocessed, scale_factor
+            fiber_result = fiber_detector.detect_fiber_type(
+                preprocessed, scale_factor, debug=False
             )
             
-            if fiber_analysis_data:
-                fiber_type = fiber_type_result
-                result['fiber_type'] = fiber_type
-                result['fiber_confidence'] = confidence
+            # Extract fiber mask
+            fiber_mask = fix_fiber_mask_extraction_worker(preprocessed, fiber_result.get('analysis_data', {}))
+            result['fiber_detection'] = fiber_result
+            
         except Exception as e:
-            result['fiber_detection_error'] = str(e)
-        
-        # Extract fiber mask
-        fiber_mask = fix_fiber_mask_extraction_worker(preprocessed, fiber_analysis_data)
+            result['fiber_detection'] = {'error': str(e)}
+            # Create empty mask as fallback
+            fiber_mask = np.zeros(preprocessed.shape[:2], dtype=np.uint8)
         
         # Porosity analysis
         porosity_features = {}
-        if POROSITY_AVAILABLE and np.sum(fiber_mask) > 1000:
+        if MODULES_LOADED['porosity_analysis']:
             try:
-                porosity_analyzer = PorosityAnalyzer() if POROSITY_TYPE == 'fast_refined' else PorosityAnalyzer()
-                
                 if POROSITY_TYPE == 'fast_refined':
-                    porosity_result = porosity_analyzer.analyze_fiber_porosity(
-                        preprocessed, fiber_mask.astype(np.uint8), scale_factor, fiber_type, fiber_analysis_data
-                    )
+                    porosity_result = analyze_fiber_porosity(preprocessed, fiber_mask, scale_factor)
                 elif POROSITY_TYPE == 'enhanced':
+                    porosity_analyzer = EnhancedPorosityAnalyzer()
                     porosity_result = porosity_analyzer.analyze_fiber_porosity(
-                        preprocessed, fiber_mask.astype(np.uint8), scale_factor
+                        preprocessed, fiber_mask, scale_factor
                     )
                 else:
-                    porosity_result = porosity_analyzer.analyze_fiber_porosity(
-                        preprocessed, fiber_mask.astype(np.uint8), scale_factor
-                    )
+                    porosity_result = quick_porosity_check(preprocessed, fiber_mask, scale_factor)
                 
-                if porosity_result and porosity_result.get('success', False):
-                    porosity_metrics = porosity_result.get('porosity_metrics', {})
-                    porosity_features = {
-                        'total_porosity_percent': porosity_metrics.get('total_porosity_percent', 0),
-                        'pore_count': porosity_metrics.get('pore_count', 0),
-                        'average_pore_size': porosity_metrics.get('average_pore_size_um2', 0),
-                        'pore_density': porosity_metrics.get('pore_density_per_mm2', 0)
-                    }
-                    result['porosity_analysis'] = porosity_result
+                porosity_metrics = porosity_result.get('porosity_metrics', {})
+                porosity_features = {
+                    'total_porosity_percent': porosity_metrics.get('total_porosity_percent', 0),
+                    'pore_count': porosity_metrics.get('pore_count', 0),
+                    'average_pore_size': porosity_metrics.get('average_pore_size_um2', 0),
+                    'pore_density': porosity_metrics.get('pore_density_per_mm2', 0)
+                }
+                result['porosity_analysis'] = porosity_result
             except Exception as e:
                 result['porosity_error'] = str(e)
+        
+        # NEW: Choose detector based on model_path
+        if model_path and MODULES_LOADED['hybrid_detector']:
+            try:
+                from hybrid_crumbly_detector import load_hybrid_detector
+                crumbly_detector = load_hybrid_detector(model_path)
+                result['model_type'] = 'hybrid'
+                # Uncomment for debugging: print(f"     🤖 Using hybrid model")
+            except Exception as e:
+                print(f"     ⚠️ Failed to load hybrid model: {e}, falling back to traditional")
+                crumbly_detector = CrumblyDetector(porosity_aware=True)
+                result['model_type'] = 'traditional_fallback'
+        else:
+            # Use traditional detector
+            crumbly_detector = CrumblyDetector(porosity_aware=True)
+            result['model_type'] = 'traditional'
         
         # Crumbly texture analysis
         if MODULES_LOADED['crumbly_detection']:
             try:
-                crumbly_detector = CrumblyDetector(porosity_aware=True)
                 fiber_mask_bool = fiber_mask > 127
                 
                 crumbly_result = crumbly_detector.analyze_crumbly_texture(
@@ -336,6 +345,18 @@ def process_single_image_worker(worker_args: Dict) -> Dict:
                     predicted_label = crumbly_result['classification']
                     confidence = crumbly_result.get('confidence', 0.0)
                     crumbly_score = crumbly_result.get('crumbly_score', 0.5)
+
+                    # ADD THIS DEBUG SECTION:
+                    porous_evidence = crumbly_result.get('porous_evidence', 0)
+                    crumbly_evidence = crumbly_result.get('crumbly_evidence', 0)
+                    intermediate_evidence = crumbly_result.get('intermediate_evidence', 0)
+                    confidence_factors = crumbly_result.get('confidence_factors', [])
+                    
+                    print(f"     🔍 DEBUG for {Path(image_info['path']).name}:")
+                    print(f"         Porous evidence: {porous_evidence:.3f}")
+                    print(f"         Crumbly evidence: {crumbly_evidence:.3f}")
+                    print(f"         Intermediate evidence: {intermediate_evidence:.3f}")
+                    print(f"         Confidence factors: {confidence_factors[:3]}")  # Show first 3
                     
                     result['predicted_label'] = predicted_label
                     result['prediction_confidence'] = confidence
@@ -343,44 +364,63 @@ def process_single_image_worker(worker_args: Dict) -> Dict:
                     result['crumbly_analysis'] = crumbly_result
                     result['processing_success'] = True
                     
-                    # Extract ML features
+                    # Extract ML features - COMPATIBLE WITH TRAINED MODELS (9 features only)
                     ml_features = {}
-                    ml_features.update(porosity_features)
+
+                    # Original 4 porosity features (from training data)
+                    ml_features['total_porosity_percent'] = porosity_features.get('total_porosity_percent', 0)
+                    ml_features['pore_count'] = porosity_features.get('pore_count', 0)
+                    ml_features['average_pore_size'] = porosity_features.get('average_pore_size', 0)
+                    ml_features['pore_density'] = porosity_features.get('pore_density', 0)
+
+                    # Original 2 crumbly features (from training data)
                     ml_features['crumbly_score'] = crumbly_score
-                    ml_features['traditional_confidence'] = confidence
-                    
-                    # Add additional features if available
-                    if 'pore_metrics' in crumbly_result:
-                        pore_metrics = crumbly_result['pore_metrics']
-                        ml_features['organized_porosity_score'] = pore_metrics.get('organized_porosity_score', 0.5)
-                        ml_features['mean_pore_circularity'] = pore_metrics.get('mean_pore_circularity', 0.5)
-                    
-                    if 'wall_integrity_metrics' in crumbly_result:
-                        wall_metrics = crumbly_result['wall_integrity_metrics']
+                    ml_features['traditional_classification_confidence'] = confidence
+
+                    # Original 3 additional features (from training data structure)
+                    # Extract these from the crumbly_result if available
+                    if 'traditional_result' in crumbly_result:
+                        trad_result = crumbly_result['traditional_result']
+                        
+                        # Try to get wall integrity score
+                        wall_metrics = trad_result.get('wall_integrity_metrics', {})
                         ml_features['wall_integrity_score'] = wall_metrics.get('wall_integrity_score', 0.5)
-                    
+                        
+                        # Try to get organized porosity score
+                        pore_metrics = trad_result.get('pore_metrics', {})
+                        ml_features['organized_porosity_score'] = pore_metrics.get('organized_porosity_score', 0.5)
+                        
+                        # Try to get boundary circularity
+                        boundary_metrics = trad_result.get('boundary_metrics', {})
+                        ml_features['boundary_circularity'] = boundary_metrics.get('boundary_circularity', 0.5)
+                    else:
+                        # Fallback values
+                        ml_features['wall_integrity_score'] = 0.5
+                        ml_features['organized_porosity_score'] = 0.5
+                        ml_features['boundary_circularity'] = 0.5
+
                     result['ml_features'] = ml_features
+
+                    
                 else:
-                    result['error'] = "Crumbly analysis returned invalid result"
+                    result['error'] = "Crumbly analysis returned no results"
             except Exception as e:
-                result['error'] = f"Crumbly analysis failed: {e}"
+                result['error'] = f"Crumbly analysis failed: {str(e)}"
         else:
-            result['error'] = "Crumbly detector not available"
+            result['error'] = "CrumblyDetector not available"
         
-        # Final memory check
+        # Final timing and memory
+        result['total_processing_time'] = time.time() - start_time
+        
         try:
-            final_memory = process.memory_info().rss / 1024 / 1024  # MB
+            final_memory = process.memory_info().rss / 1024 / 1024
             result['memory_usage_mb'] = final_memory - initial_memory
         except:
-            pass
-        
-        result['total_processing_time'] = time.time() - start_time
-        
+            result['memory_usage_mb'] = 0
+    
     except Exception as e:
-        result['error'] = str(e)
+        result['error'] = f"Processing failed: {str(e)}"
         result['total_processing_time'] = time.time() - start_time
-        import traceback
-        result['traceback'] = traceback.format_exc()
     
     return result
 
@@ -411,29 +451,48 @@ class MultiprocessingCrumblyWorkflowManager:
         print(f"   Processes to use: {self.num_processes}")
     
     def get_image_files(self, dataset_path: str) -> List[Dict]:
-        """Get all image files with their labels from dataset."""
+        """Get all image files with flexible folder-to-label mapping."""
         dataset_path = Path(dataset_path)
         image_files = []
         
-        # Define label mapping
+        # More comprehensive mapping including common folder naming conventions
         label_map = {
+            # Crumbly variations
             'crumbly': {'label': 'crumbly', 'numeric': 2},
+            'crumbly_texture': {'label': 'crumbly', 'numeric': 2},
+            'rough': {'label': 'crumbly', 'numeric': 2},
+            
+            # Intermediate variations  
             'intermediate': {'label': 'intermediate', 'numeric': 1},
-            'not': {'label': 'not', 'numeric': 0}
+            'medium': {'label': 'intermediate', 'numeric': 1},
+            'semi_crumbly': {'label': 'intermediate', 'numeric': 1},
+            
+            # Not crumbly variations (smooth/porous)
+            'not': {'label': 'porous', 'numeric': 0},
+            'not_crumbly': {'label': 'porous', 'numeric': 0},
+            'smooth': {'label': 'porous', 'numeric': 0},
+            'porous': {'label': 'porous', 'numeric': 0},  # Key addition for your case
+            'organized': {'label': 'porous', 'numeric': 0},
+            'clean': {'label': 'porous', 'numeric': 0}
         }
         
+        # Log which folders are found
+        found_folders = []
         for folder_name, label_info in label_map.items():
             folder_path = dataset_path / folder_name
             if folder_path.exists():
+                found_folders.append(f"{folder_name} -> {label_info['label']}")
                 extensions = ['*.jpg', '*.jpeg', '*.png', '*.tif', '*.tiff', '*.bmp']
                 for ext in extensions:
                     for img_file in folder_path.glob(ext):
                         image_files.append({
                             'path': img_file,
                             'true_label': label_info['label'],
-                            'label_numeric': label_info['numeric']
+                            'label_numeric': label_info['numeric'],
+                            'source_folder': folder_name  # Track original folder
                         })
         
+        print(f"   Found folders: {', '.join(found_folders)}")
         print(f"   Found {len(image_files)} images total")
         return image_files
     
@@ -657,7 +716,10 @@ class MultiprocessingCrumblyWorkflowManager:
             
             if feature_data:
                 features_df = pd.DataFrame(feature_data)
-                features_df['label'] = labels
+                features_df['true_label'] = labels
+                # Add text labels for better compatibility
+                label_map = {0: 'not', 1: 'intermediate', 2: 'crumbly'}
+                features_df['true_label_name'] = [label_map[label] for label in labels]
                 features_file = run_dir / "ml_features_dataset.csv"
                 features_df.to_csv(features_file, index=False)
                 print(f"   🤖 ML features: {features_file.name}")
@@ -697,13 +759,21 @@ class MultiprocessingCrumblyWorkflowManager:
             print(f"   Training hybrid model...")
             
             # Train the hybrid model
-            training_results = train_hybrid_detector(
-                features_file=str(features_path),
-                output_dir=str(model_dir),
-                test_size=0.3,
-                random_state=42
-            )
-            
+            try:
+                hybrid_detector = train_hybrid_detector(
+                    evaluation_csv_path=str(features_path),
+                    model_save_path=str(model_dir)
+                )
+                
+                # Create success dictionary since train_hybrid_detector returns a detector object, not a dict
+                if hybrid_detector and hybrid_detector.is_trained:
+                    training_results = {'success': True, 'detector': hybrid_detector}
+                else:
+                    training_results = {'success': False, 'error': 'Training failed'}
+                    
+            except Exception as e:
+                training_results = {'success': False, 'error': str(e)}
+
             if training_results and training_results.get('success', False):
                 train_summary = {
                     'success': True,
@@ -725,7 +795,7 @@ class MultiprocessingCrumblyWorkflowManager:
                 self.workflow_results['training'] = train_summary
                 return train_summary
             else:
-                error_msg = training_results.get('error', 'Training function returned failure') if training_results else 'Training function returned None'
+                error_msg = training_results.get('error', 'Unknown training error')
                 train_summary = {
                     'success': False,
                     'error': error_msg,
@@ -744,6 +814,165 @@ class MultiprocessingCrumblyWorkflowManager:
             self.workflow_results['training'] = train_summary
             return train_summary
     
+    def run_parallel_evaluation_hybrid(self, dataset_path: str, model_path: str, max_images: Optional[int] = None) -> Dict:
+        """
+        Run parallel evaluation using trained hybrid models.
+        
+        Args:
+            dataset_path: Path to dataset with labeled folders
+            model_path: Path to trained hybrid models
+            max_images: Maximum number of images to process
+            
+        Returns:
+            Dictionary with evaluation results
+        """
+        
+        print(f"\n🤖 PARALLEL HYBRID EVALUATION")
+        print("=" * 60)
+        print(f"   Dataset: {dataset_path}")
+        print(f"   Model path: {model_path}")
+        print(f"   Max images: {max_images or 'all'}")
+        print(f"   Processes: {self.num_processes}")
+        
+        start_time = time.time()
+        
+        try:
+            # Verify model path exists
+            model_path_obj = Path(model_path)
+            if not model_path_obj.exists():
+                raise FileNotFoundError(f"Model path does not exist: {model_path}")
+            
+            # Test hybrid model loading
+            print(f"🔍 Verifying hybrid models...")
+            if not MODULES_LOADED['hybrid_detector']:
+                raise ImportError("Hybrid detector not available")
+            
+            from hybrid_crumbly_detector import load_hybrid_detector
+            test_detector = load_hybrid_detector(model_path)
+            
+            if not test_detector.is_trained:
+                raise ValueError("Models not properly trained")
+            
+            print(f"✅ Hybrid models verified:")
+            print(f"   Models available: {list(test_detector.ml_models.keys())}")
+            print(f"   Ensemble available: {hasattr(test_detector, 'ensemble_model')}")
+            print(f"   Feature count: {len(test_detector.feature_names)}")
+            
+            # Validate dataset
+            dataset_path_obj = Path(dataset_path)
+            if not dataset_path_obj.exists():
+                raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
+            
+            # Get image files
+            image_files = self.get_image_files(dataset_path)
+            
+            if max_images:
+                image_files = image_files[:max_images]
+                print(f"   Limiting to {max_images} images for testing")
+            
+            if not image_files:
+                raise ValueError("No image files found in dataset")
+            
+            print(f"   Processing {len(image_files)} images with hybrid models...")
+            
+            # Prepare worker arguments WITH model path in config
+            worker_args = [
+                {
+                    'image_info': image_info, 
+                    'config': {'model_path': str(model_path)}  # NEW: Pass model path in config
+                } 
+                for image_info in image_files
+            ]
+            
+            # Process images in parallel
+            results = []
+            successful_processes = 0
+            
+            print(f"\n⚡ Starting hybrid parallel processing...")
+            
+            with ProcessPoolExecutor(max_workers=self.num_processes) as executor:
+                # Submit all jobs
+                future_to_image = {
+                    executor.submit(process_single_image_worker, arg): arg['image_info']['path']
+                    for arg in worker_args
+                }
+                
+                completed = 0
+                
+                # Collect results as they complete
+                for future in as_completed(future_to_image):
+                    image_path = future_to_image[future]
+                    completed += 1
+                    
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        
+                        if result['processing_success']:
+                            successful_processes += 1
+                            status = "✅"
+                            
+                            # Show prediction results
+                            predicted = result['predicted_label']
+                            confidence = result['prediction_confidence']
+                            true_label = result.get('true_label', 'unknown')
+                            match = "✓" if predicted == true_label else "✗"
+                            model_type = result.get('model_type', 'unknown')
+                            
+                            prediction_info = f"{predicted} (conf: {confidence:.2f}) {match} [{model_type}]"
+                        else:
+                            status = "❌"
+                            prediction_info = f"Failed: {result.get('error', 'Unknown error')[:30]}..."
+                        
+                        # Progress update with ETA
+                        progress = completed / len(image_files) * 100
+                        elapsed = time.time() - start_time
+                        eta = elapsed * (len(image_files) - completed) / completed if completed > 0 else 0
+                        
+                        print(f"{status} [{completed:3d}/{len(image_files)}] {progress:5.1f}% | "
+                            f"{Path(image_path).name:30s} | Time: {elapsed:5.1f}s | "
+                            f"{prediction_info:50s} | ETA: {eta:5.0f}s")
+                        
+                    except Exception as e:
+                        print(f"❌ [{completed:3d}/{len(image_files)}] Error processing {Path(image_path).name}: {e}")
+                        results.append({
+                            'image_path': str(image_path),
+                            'processing_success': False,
+                            'error': str(e)
+                        })
+            
+            total_time = time.time() - start_time
+            
+            # Analyze results
+            analysis_results = self.analyze_parallel_results(results)
+            
+            # Save results
+            self.save_parallel_results(results, analysis_results)
+            
+            print(f"\n🎉 HYBRID EVALUATION COMPLETE!")
+            print(f"   Total time: {total_time:.1f} seconds ({total_time/60:.1f} minutes)")
+            print(f"   Success rate: {successful_processes}/{len(image_files)} ({successful_processes/len(image_files)*100:.1f}%)")
+            print(f"   Overall accuracy: {analysis_results.get('overall_accuracy', 0):.3f}")
+            print(f"   Hybrid models used: ✅")
+            
+            return {
+                'success': True,
+                'total_images': len(image_files),
+                'successful_images': successful_processes,
+                'overall_accuracy': analysis_results.get('overall_accuracy', 0),
+                'processing_time': total_time,
+                'analysis_results': analysis_results,
+                'model_type': 'hybrid'
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'total_time': time.time() - start_time
+            }
+
+
     def run_complete_parallel_workflow(self, dataset_path: str, max_images: Optional[int] = None,
                                      test_split: float = 0.3) -> Dict:
         """Run complete workflow with parallel evaluation."""
@@ -847,8 +1076,8 @@ Performance Tips:
         """
     )
     
-    parser.add_argument('command', choices=['evaluate', 'train', 'complete'],
-                       help='Workflow command to execute')
+    parser.add_argument('command', choices=['evaluate', 'evaluate-hybrid', 'train', 'complete'],
+                   help='Workflow command to execute')
     parser.add_argument('path', help='Path to dataset or features file')
     parser.add_argument('--output', '-o', default='multiprocessing_crumbly_results',
                        help='Output directory')
@@ -858,6 +1087,8 @@ Performance Tips:
                        help='Number of processes (auto, or specific number)')
     parser.add_argument('--test-split', type=float, default=0.3,
                        help='Test split fraction for complete workflow')
+    parser.add_argument('--model-path', type=str,  # NEW LINE
+                    help='Path to trained hybrid models (for evaluate-hybrid command)')
     
     args = parser.parse_args()
     
@@ -888,6 +1119,14 @@ Performance Tips:
         if args.command == 'evaluate':
             print(f"🔍 Running parallel evaluation on: {args.path}")
             results = workflow.run_parallel_evaluation(args.path, args.max_images)
+        
+        elif args.command == 'evaluate-hybrid':
+            if not args.model_path:
+                print("❌ --model-path is required for evaluate-hybrid command")
+                return 1
+            print(f"🤖 Running hybrid evaluation on: {args.path}")
+            print(f"   Using models from: {args.model_path}")
+            results = workflow.run_parallel_evaluation_hybrid(args.path, args.model_path, args.max_images)
             
         elif args.command == 'train':
             print(f"🤖 Training hybrid model with: {args.path}")

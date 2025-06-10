@@ -596,7 +596,10 @@ class CrumblyEvaluationSystem:
         # Save ML features for training
         if self.feature_matrix and self.labels:
             features_df = pd.DataFrame(self.feature_matrix)
-            features_df['label'] = self.labels
+            features_df['true_label'] = self.labels
+            # Add text labels for better compatibility  
+            label_map = {0: 'not', 1: 'intermediate', 2: 'crumbly'}
+            features_df['true_label_name'] = [label_map[label] for label in self.labels]
             features_file = self.run_dir / "ml_features_dataset.csv"
             features_df.to_csv(features_file, index=False)
             print(f"   🤖 ML features: {features_file.name}")

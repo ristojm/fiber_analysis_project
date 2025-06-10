@@ -155,6 +155,7 @@ analysis_results/*
 .DS_Store
 Thumbs.db
 crumbly_workflow_results/*
+multiprocessing_crumbly_results/*
 
 # OCR temporary files
 tesseract_temp/
