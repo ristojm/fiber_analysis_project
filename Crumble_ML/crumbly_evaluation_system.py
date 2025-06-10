@@ -1,28 +1,12 @@
 #!/usr/bin/env python3
 """
-Crumbly Texture Evaluation System - FULLY CORRECTED VERSION
-Evaluates current detector against labeled dataset and prepares ML training data.
+Crumbly Texture Evaluation System - FIXED WITH COMPREHENSIVE_ANALYZER APPROACH
+Uses the exact same mask handling approach as comprehensive_analyzer_main.py
 
-COMPREHENSIVE FIXES:
-1. Proper path setup for modules/ directory imports
-2. Corrected ALL method names to match actual implementations
-3. Fixed module initialization and integration issues
-4. Proper error handling and fallbacks
-5. Correct usage of all detector classes and their methods
-6. Fixed to use preprocessed images like comprehensive_analyzer_main.py
-
-Folder structure expected:
-your_dataset/
-├── crumbly/
-│   ├── image1.tif
-│   ├── image2.png
-│   └── ...
-├── intermediate/
-│   ├── image3.tif
-│   └── ...
-└── not/
-    ├── image4.tif
-    └── ...
+CRITICAL FIX: 
+- Uses the same fix_fiber_mask_extraction method from comprehensive_analyzer_main.py
+- Uses preprocessed images consistently like comprehensive_analyzer_main.py
+- Proper mask format handling exactly matching the working implementation
 """
 
 import sys
@@ -45,24 +29,22 @@ from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
-# ===== PATH SETUP (CRITICAL FIX) =====
-# Set up paths to find both modules/ and Crumble_ML/
+# ===== PATH SETUP (MATCHING comprehensive_analyzer_main.py) =====
 current_dir = Path(__file__).parent
-project_root = current_dir.parent  # Go up to main project directory
+project_root = current_dir.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "modules"))
-sys.path.insert(0, str(current_dir))  # Current Crumble_ML directory
+sys.path.insert(0, str(current_dir))
 
 print(f"🔧 Path setup for evaluation system:")
 print(f"   Current dir: {current_dir}")
 print(f"   Project root: {project_root}")
 print(f"   Modules path: {project_root / 'modules'}")
 
-# ===== IMPORT MODULES WITH PROPER ERROR HANDLING =====
+# ===== IMPORT MODULES (MATCHING comprehensive_analyzer_main.py) =====
 MODULES_LOADED = {}
 
 try:
-    # Import from modules/ directory
     from modules.image_preprocessing import load_image, preprocess_pipeline, load_and_preprocess
     MODULES_LOADED['image_preprocessing'] = True
     print("✅ Successfully imported image preprocessing")
@@ -86,8 +68,8 @@ except ImportError as e:
     print(f"❌ Fiber type detection import error: {e}")
     MODULES_LOADED['fiber_type_detection'] = False
 
+# Porosity analysis with same fallback logic as comprehensive_analyzer_main.py
 try:
-    # Import porosity analysis (multiple versions supported)
     from modules.porosity_analysis import PorosityAnalyzer, analyze_fiber_porosity, quick_porosity_check
     MODULES_LOADED['porosity_analysis'] = 'fast_refined'
     print("✅ Successfully imported fast refined porosity analysis")
@@ -105,37 +87,28 @@ except ImportError:
             MODULES_LOADED['porosity_analysis'] = False
             print("❌ No porosity analysis available")
 
-# Import crumbly detector from modules/ directory (like comprehensive_analyzer_main.py does)
+# Crumbly detector
 try:
     from modules.crumbly_detection import CrumblyDetector
     MODULES_LOADED['crumbly_detection'] = True
     print("✅ Successfully imported CrumblyDetector from modules/")
 except ImportError as e:
     try:
-        # Fallback: try current directory
         from crumbly_detection import CrumblyDetector
         MODULES_LOADED['crumbly_detection'] = True
         print("✅ Successfully imported CrumblyDetector from current directory")
     except ImportError as e2:
         print(f"❌ CrumblyDetector import error: {e}")
         print(f"❌ Fallback import also failed: {e2}")
-        print("Make sure crumbly_detection.py is in modules/ directory")
         MODULES_LOADED['crumbly_detection'] = False
 
 class CrumblyEvaluationSystem:
     """
-    Comprehensive evaluation system for crumbly texture detection.
-    FULLY CORRECTED VERSION: All method names and integrations fixed.
+    Crumbly evaluation system using the exact same approach as comprehensive_analyzer_main.py
     """
     
     def __init__(self, dataset_path: str, output_dir: str = "crumbly_evaluation_results"):
-        """
-        Initialize evaluation system.
-        
-        Args:
-            dataset_path: Path to dataset with crumbly/intermediate/not folders
-            output_dir: Directory to save evaluation results
-        """
+        """Initialize evaluation system."""
         self.dataset_path = Path(dataset_path)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True, parents=True)
@@ -145,33 +118,46 @@ class CrumblyEvaluationSystem:
         self.run_dir = self.output_dir / f"evaluation_run_{self.timestamp}"
         self.run_dir.mkdir(exist_ok=True, parents=True)
         
-        # Initialize detectors with proper error handling and correct method usage
-        self.crumbly_detector = None
-        self.fiber_detector = None
-        self.scale_detector = None
-        self.porosity_analyzer = None
+        # Initialize components using the same pattern as comprehensive_analyzer_main.py
+        self.init_components()
         
-        # Initialize CrumblyDetector (using the working version from modules/)
+        # Results storage
+        self.evaluation_results = []
+        self.feature_matrix = []
+        self.labels = []
+        self.label_names = []
+        self.analysis_results = {}
+        
+        print(f"🔬 Crumbly Evaluation System Initialized")
+        print(f"   Dataset: {self.dataset_path}")
+        print(f"   Output: {self.run_dir}")
+    
+    def init_components(self):
+        """Initialize components using the same pattern as comprehensive_analyzer_main.py"""
+        
+        # Initialize CrumblyDetector
         if MODULES_LOADED['crumbly_detection']:
             try:
                 self.crumbly_detector = CrumblyDetector(porosity_aware=True)
-                print("✅ CrumblyDetector initialized (from modules/)")
+                print("✅ CrumblyDetector initialized")
             except Exception as e:
                 print(f"❌ Error initializing CrumblyDetector: {e}")
                 self.crumbly_detector = None
         else:
-            print("❌ CrumblyDetector not available")
             self.crumbly_detector = None
         
-        # Initialize FiberTypeDetector
+        # Initialize FiberTypeDetector (same as comprehensive_analyzer_main.py)
         if MODULES_LOADED['fiber_type_detection']:
             try:
                 self.fiber_detector = FiberTypeDetector()
                 print("✅ FiberTypeDetector initialized")
             except Exception as e:
                 print(f"❌ Error initializing FiberTypeDetector: {e}")
+                self.fiber_detector = None
+        else:
+            self.fiber_detector = None
         
-        # Initialize ScaleBarDetector
+        # Initialize ScaleBarDetector (same as comprehensive_analyzer_main.py)
         if MODULES_LOADED['scale_detection']:
             try:
                 self.scale_detector = ScaleBarDetector(
@@ -181,8 +167,11 @@ class CrumblyEvaluationSystem:
                 print("✅ ScaleBarDetector initialized")
             except Exception as e:
                 print(f"❌ Error initializing ScaleBarDetector: {e}")
+                self.scale_detector = None
+        else:
+            self.scale_detector = None
         
-        # Initialize PorosityAnalyzer
+        # Initialize PorosityAnalyzer (same fallback logic as comprehensive_analyzer_main.py)
         if MODULES_LOADED['porosity_analysis']:
             try:
                 porosity_type = MODULES_LOADED['porosity_analysis']
@@ -190,26 +179,56 @@ class CrumblyEvaluationSystem:
                     self.porosity_analyzer = PorosityAnalyzer()
                 elif porosity_type == 'enhanced':
                     self.porosity_analyzer = EnhancedPorosityAnalyzer()
-                elif porosity_type == 'basic':
+                else:
                     self.porosity_analyzer = PorosityAnalyzer()
-                print(f"✅ PorosityAnalyzer initialized ({porosity_type})")
+                print(f"✅ PorosityAnalyzer initialized: {porosity_type}")
             except Exception as e:
                 print(f"❌ Error initializing PorosityAnalyzer: {e}")
+                self.porosity_analyzer = None
+        else:
+            self.porosity_analyzer = None
+    
+    def fix_fiber_mask_extraction(self, image: np.ndarray, fiber_analysis_data: Dict, debug: bool = False) -> np.ndarray:
+        """
+        COPIED EXACTLY FROM comprehensive_analyzer_main.py
+        Simple and clean fiber mask extraction from analysis data.
         
-        # Results storage
-        self.evaluation_results = []
-        self.feature_matrix = []
-        self.labels = []
-        self.label_mapping = {'not': 0, 'intermediate': 1, 'crumbly': 2}
-        self.reverse_label_mapping = {0: 'not', 1: 'intermediate', 2: 'crumbly'}
-        self.analysis_results = {}
+        Args:
+            image: Original image for shape reference
+            fiber_analysis_data: Results from fiber type detection
+            debug: Enable debug output
+            
+        Returns:
+            Binary fiber mask (uint8, 0 or 255)
+        """
         
-        print(f"🔬 Crumbly Evaluation System Initialized")
-        print(f"   Dataset: {self.dataset_path}")
-        print(f"   Output: {self.run_dir}")
+        if debug:
+            print(f"   🔧 Extracting fiber mask from analysis data...")
+        
+        # Get fiber mask from analysis data
+        fiber_mask = fiber_analysis_data.get('fiber_mask')
+        
+        if fiber_mask is not None and isinstance(fiber_mask, np.ndarray):
+            # Ensure proper format
+            if fiber_mask.dtype != np.uint8:
+                fiber_mask = (fiber_mask > 0).astype(np.uint8) * 255
+            
+            # Check if mask has sufficient content
+            mask_area = np.sum(fiber_mask > 0)
+            
+            if debug:
+                print(f"   ✅ Fiber mask extracted: {mask_area:,} pixels")
+                print(f"   Coverage: {mask_area / fiber_mask.size * 100:.1f}%")
+            
+            return fiber_mask
+        else:
+            if debug:
+                print(f"   ❌ No valid fiber mask found in analysis data")
+            # Return empty mask as fallback
+            return np.zeros(image.shape[:2], dtype=np.uint8)
     
     def validate_dataset_structure(self) -> bool:
-        """Validate that the dataset has the expected structure."""
+        """Validate that dataset has the required structure."""
         print(f"\n🔍 Validating dataset structure...")
         
         if not self.dataset_path.exists():
@@ -226,203 +245,149 @@ class CrumblyEvaluationSystem:
         
         if missing_folders:
             print(f"❌ Missing required folders: {missing_folders}")
-            print(f"   Expected structure: dataset/{{crumbly, intermediate, not}}/")
             return False
         
-        # Check for images in each folder
-        total_images = 0
-        for folder in required_folders:
-            folder_path = self.dataset_path / folder
-            image_count = len(list(folder_path.glob("*.tif")) + 
-                            list(folder_path.glob("*.png")) + 
-                            list(folder_path.glob("*.jpg")))
-            total_images += image_count
-            print(f"   📁 {folder}: {image_count} images")
-        
-        if total_images == 0:
-            print("❌ No images found in dataset!")
-            return False
-        
-        print(f"✅ Dataset structure valid: {total_images} total images")
+        print(f"✅ Dataset structure validated")
         return True
     
     def get_image_files(self) -> List[Dict]:
         """Get all image files with their labels."""
         image_files = []
         
-        for label in ['crumbly', 'intermediate', 'not']:
-            folder_path = self.dataset_path / label
-            
-            # Get all image files
-            extensions = ['*.tif', '*.png', '*.jpg', '*.jpeg', '*.bmp']
-            for ext in extensions:
-                for image_path in folder_path.glob(ext):
-                    image_files.append({
-                        'path': image_path,
-                        'true_label': label,
-                        'label_numeric': self.label_mapping[label]
-                    })
+        # Define label mapping
+        label_map = {
+            'crumbly': {'label': 'crumbly', 'numeric': 2},
+            'intermediate': {'label': 'intermediate', 'numeric': 1},
+            'not': {'label': 'not', 'numeric': 0}
+        }
         
-        print(f"📊 Found {len(image_files)} images total")
+        for folder_name, label_info in label_map.items():
+            folder_path = self.dataset_path / folder_name
+            if folder_path.exists():
+                extensions = ['*.jpg', '*.jpeg', '*.png', '*.tif', '*.tiff', '*.bmp']
+                for ext in extensions:
+                    for img_file in folder_path.glob(ext):
+                        image_files.append({
+                            'path': img_file,
+                            'true_label': label_info['label'],
+                            'label_numeric': label_info['numeric']
+                        })
+        
+        print(f"   Found {len(image_files)} images total")
         return image_files
     
-    def process_single_image(self, image_info: Dict, debug: bool = False) -> Dict:
+    def process_single_image(self, image_info, debug=False):
         """
-        Process a single image and extract features for evaluation.
-        FULLY CORRECTED: All method names and integrations fixed + preprocessed images.
+        Process a single image using the EXACT SAME approach as comprehensive_analyzer_main.py
         """
-        image_path = image_info['path']
-        true_label = image_info['true_label']
         
         result = {
-            'image_name': image_path.name,
-            'image_path': str(image_path),
-            'true_label': true_label,
+            'image_path': str(image_info['path']),
+            'true_label': image_info['true_label'],
             'processing_success': False,
-            'error': None
+            'predicted_label': 'unknown',
+            'prediction_confidence': 0.0,
+            'crumbly_score': 0.5,
+            'ml_features': {},
+            'error_details': {}
         }
         
         try:
+            # Load and preprocess image (SAME AS comprehensive_analyzer_main.py)
             print(f"     📸 Loading image...")
+            image_path = str(image_info['path'])
             
-            # Load image using correct method
-            if MODULES_LOADED['image_preprocessing']:
-                image = load_image(str(image_path))
-                # CRITICAL FIX: Preprocess the image like comprehensive_analyzer_main.py does
-                preprocessed_result = preprocess_pipeline(str(image_path))
-                preprocessed = preprocessed_result['processed']
-            else:
-                image = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
-                preprocessed = image.copy()
+            # Use the same loading approach as comprehensive_analyzer_main.py
+            original_image = load_image(image_path)
+            if original_image is None:
+                result['error'] = "Failed to load image"
+                return result
             
-            if image is None:
-                raise ValueError("Failed to load image")
+            # Preprocess image (CORRECT: Use individual parameters, not config dict)
+            preprocessed = preprocess_pipeline(
+                str(image_info['path']),
+                enhance_contrast_method='clahe',
+                denoise_method='bilateral',
+                remove_scale_bar=True,
+                normalize=True
+            )
             
-            result['image_shape'] = image.shape
-            print(f"     ✅ Image loaded: {image.shape}")
-
-            # Scale detection with Windows-compatible timeout protection
+            # Extract the processed image from the result dictionary
+            if isinstance(preprocessed, dict):
+                preprocessed = preprocessed['processed']
+            
+            print(f"     ✅ Image loaded: {original_image.shape}")
+            
+            # Scale detection (SAME AS comprehensive_analyzer_main.py)
             scale_factor = 1.0
             print(f"     🔍 Scale detection...")
-            
             if self.scale_detector and MODULES_LOADED['scale_detection']:
                 try:
-                    import threading
-                    import time
-                    
-                    scale_result = None
-                    error_occurred = None
-                    
-                    def scale_detection_worker():
-                        nonlocal scale_result, error_occurred
-                        try:
-                            # CORRECTED: Use detect_scale_bar method on ORIGINAL image (not preprocessed)
-                            scale_result = self.scale_detector.detect_scale_bar(image)
-                        except Exception as e:
-                            error_occurred = e
-                    
-                    # Run scale detection in a separate thread with timeout
-                    thread = threading.Thread(target=scale_detection_worker)
-                    thread.daemon = True
-                    thread.start()
-                    thread.join(timeout=30)  # 30 second timeout
-                    
-                    if thread.is_alive():
-                        print(f"     ⏰ Scale detection timeout - continuing without scale")
-                        result['scale_detected'] = False
-                        result['scale_factor'] = 1.0
-                        scale_factor = 1.0
-                    elif error_occurred:
-                        raise error_occurred
-                    elif scale_result and scale_result.get('scale_detected', False):
+                    scale_result = self.scale_detector.detect_scale_bar(original_image)
+                    if scale_result and scale_result.get('scale_detected', False):
                         scale_factor = scale_result.get('micrometers_per_pixel', 1.0)
-                        result['scale_detected'] = True
-                        result['scale_factor'] = scale_factor
                         print(f"     ✅ Scale detected: {scale_factor:.4f} μm/pixel")
                     else:
-                        result['scale_detected'] = False
-                        result['scale_factor'] = 1.0
-                        print(f"     ⚠️ No scale detected")
-                        
+                        print(f"     ⚠️ Scale detection failed")
                 except Exception as e:
-                    print(f"     ⚠️ Scale detection issue: {e}")
-                    result['scale_detected'] = False
-                    result['scale_factor'] = 1.0
-                    scale_factor = 1.0
-            else:
-                result['scale_detected'] = False
-                result['scale_factor'] = 1.0
-                print(f"     ⚠️ Scale detector not available")
+                    print(f"     ⚠️ Scale detection error: {e}")
             
-            # Fiber detection using correct method (FIXED: Use preprocessed image)
-            fiber_mask = None
-            lumen_mask = None
+            # Fiber type detection (SAME AS comprehensive_analyzer_main.py)
             fiber_type = 'unknown'
-            
+            fiber_analysis_data = None
             print(f"     🔬 Fiber detection...")
-            
             if self.fiber_detector and MODULES_LOADED['fiber_type_detection']:
                 try:
-                    # CRITICAL FIX: Use classify_fiber_type method with PREPROCESSED image ONLY
-                    # This matches comprehensive_analyzer_main.py pattern exactly
-                    fiber_type_result, confidence, fiber_analysis_data = self.fiber_detector.classify_fiber_type(preprocessed)
+                    # CRITICAL: Use classify_fiber_type with PREPROCESSED image (same as comprehensive_analyzer_main.py)
+                    fiber_type_result, confidence, fiber_analysis_data = self.fiber_detector.classify_fiber_type(
+                        preprocessed, scale_factor  # Use preprocessed image!
+                    )
                     
-                    # FIXED: Extract fiber_mask directly from fiber_analysis_data (no success check needed)
                     if fiber_analysis_data:
-                        fiber_mask = fiber_analysis_data.get('fiber_mask')
-                        lumen_mask = fiber_analysis_data.get('lumen_mask')
                         fiber_type = fiber_type_result
                         result['fiber_type'] = fiber_type
                         result['fiber_confidence'] = confidence
                         print(f"     ✅ Fiber type: {fiber_type} (conf: {confidence:.3f})")
-                        
-                        # Log what we got from fiber_analysis_data
-                        if fiber_mask is not None:
-                            print(f"     ✅ Fiber mask extracted: {fiber_mask.shape}")
-                        else:
-                            print(f"     ⚠️ No fiber mask in analysis data")
                     else:
-                        result['fiber_type'] = 'unknown'
                         print(f"     ⚠️ No fiber_analysis_data returned")
                         
                 except Exception as e:
                     print(f"     ⚠️ Fiber detection issue: {e}")
-                    import traceback
-                    traceback.print_exc()
                     result['fiber_type'] = 'unknown'
             else:
                 print(f"     ⚠️ Fiber detector not available")
             
-            # Create basic masks if fiber detection failed
-            if fiber_mask is None:
-                print(f"     🔧 Creating fallback mask...")
-                # Create a basic mask using thresholding
-                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
-                fiber_mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
-                fiber_mask = fiber_mask.astype(bool)
-                print(f"     ✅ Fallback mask created")
+            # Extract fiber mask using the SAME method as comprehensive_analyzer_main.py
+            fiber_mask = self.fix_fiber_mask_extraction(preprocessed, fiber_analysis_data or {}, debug=debug)
             
-            # Porosity analysis using correct method
+            # Porosity analysis (SAME approach as comprehensive_analyzer_main.py)
             porosity_features = {}
             print(f"     📊 Porosity analysis...")
             
-            if self.porosity_analyzer and MODULES_LOADED['porosity_analysis']:
+            if self.porosity_analyzer and MODULES_LOADED['porosity_analysis'] and np.sum(fiber_mask) > 1000:
                 try:
                     porosity_type = MODULES_LOADED['porosity_analysis']
+                    
+                    # Call porosity analysis using the SAME pattern as comprehensive_analyzer_main.py
                     if porosity_type == 'fast_refined':
-                        # CORRECTED: Use analyze_fiber_porosity method
                         porosity_result = self.porosity_analyzer.analyze_fiber_porosity(
-                            image, fiber_mask.astype(np.uint8), scale_factor, fiber_type
+                            preprocessed, 
+                            fiber_mask.astype(np.uint8), 
+                            scale_factor, 
+                            fiber_type,
+                            fiber_analysis_data
                         )
                     elif porosity_type == 'enhanced':
-                        # CORRECTED: Use enhanced method
-                        porosity_result = analyze_fiber_porosity_enhanced(
-                            image, fiber_mask.astype(np.uint8), scale_factor
+                        porosity_result = self.porosity_analyzer.analyze_fiber_porosity(
+                            preprocessed, 
+                            fiber_mask.astype(np.uint8), 
+                            scale_factor
                         )
                     else:
-                        # Basic version
                         porosity_result = self.porosity_analyzer.analyze_fiber_porosity(
-                            image, fiber_mask.astype(np.uint8), scale_factor
+                            preprocessed, 
+                            fiber_mask.astype(np.uint8), 
+                            scale_factor
                         )
                     
                     if porosity_result and porosity_result.get('success', False):
@@ -441,120 +406,79 @@ class CrumblyEvaluationSystem:
                 except Exception as e:
                     print(f"     ⚠️ Porosity analysis issue: {e}")
             else:
-                print(f"     ⚠️ Porosity analyzer not available")
+                print(f"     ⚠️ Porosity analyzer not available or insufficient mask area")
             
-            # Crumbly texture analysis with timeout protection
+            # Crumbly texture analysis 
             print(f"     🧩 Crumbly texture analysis...")
             
             if self.crumbly_detector and MODULES_LOADED['crumbly_detection']:
                 try:
-                    import threading
+                    # Convert fiber mask to boolean for crumbly detector
+                    fiber_mask_bool = fiber_mask > 127
                     
-                    crumbly_result = None
-                    error_occurred = None
+                    # Call crumbly analysis with preprocessed image (same pattern as comprehensive_analyzer_main.py)
+                    crumbly_result = self.crumbly_detector.analyze_crumbly_texture(
+                        preprocessed,  # Use preprocessed image
+                        fiber_mask_bool,
+                        None,  # No lumen mask for now
+                        scale_factor,
+                        debug=False
+                    )
                     
-                    def crumbly_analysis_worker():
-                        nonlocal crumbly_result, error_occurred
-                        try:
-                            # CORRECTED: Use analyze_crumbly_texture method
-                            crumbly_result = self.crumbly_detector.analyze_crumbly_texture(
-                                image, fiber_mask.astype(np.uint8), lumen_mask, scale_factor, debug=debug
-                            )
-                        except Exception as e:
-                            error_occurred = e
-                    
-                    # Run crumbly analysis in a separate thread with timeout
-                    thread = threading.Thread(target=crumbly_analysis_worker)
-                    thread.daemon = True
-                    thread.start()
-                    thread.join(timeout=60)  # 60 second timeout for crumbly analysis
-                    
-                    if thread.is_alive():
-                        print(f"     ⏰ Crumbly analysis timeout - skipping this image")
-                        result['error'] = "Crumbly analysis timeout"
-                        return result
-                    elif error_occurred:
-                        raise error_occurred
-                    elif crumbly_result:
-                        # Extract prediction results
-                        result['predicted_label'] = crumbly_result.get('classification', 'unknown')
-                        result['prediction_confidence'] = crumbly_result.get('confidence', 0.0)
-                        result['crumbly_score'] = crumbly_result.get('crumbly_score', 0.0)
+                    if crumbly_result and 'classification' in crumbly_result:
+                        predicted_label = crumbly_result['classification']
+                        confidence = crumbly_result.get('confidence', 0.0)
+                        crumbly_score = crumbly_result.get('crumbly_score', 0.5)
+                        
+                        result['predicted_label'] = predicted_label
+                        result['prediction_confidence'] = confidence
+                        result['crumbly_score'] = crumbly_score
+                        result['crumbly_analysis'] = crumbly_result
                         result['processing_success'] = True
                         
-                        print(f"     ✅ Crumbly analysis: {result['predicted_label']} (score: {result['crumbly_score']:.3f})")
+                        print(f"     ✅ Crumbly prediction: {predicted_label} (conf: {confidence:.3f}, score: {crumbly_score:.3f})")
                         
-                        # Extract ML features for training
+                        # Extract ML features
                         ml_features = {}
-                        
-                        # Add detailed metrics from crumbly analysis
-                        if 'detailed_metrics' in crumbly_result:
-                            ml_features.update(crumbly_result['detailed_metrics'])
-                        
-                        # Add basic crumbly features
-                        ml_features.update({
-                            'crumbly_score': crumbly_result.get('crumbly_score', 0.0),
-                            'confidence': crumbly_result.get('confidence', 0.0),
-                            'num_crumbly_indicators': crumbly_result.get('num_crumbly_indicators', 0),
-                            'num_porous_indicators': crumbly_result.get('num_porous_indicators', 0),
-                            'crumbly_evidence': crumbly_result.get('crumbly_evidence', 0.0),
-                            'porous_evidence': crumbly_result.get('porous_evidence', 0.0),
-                        })
-                        
-                        # Add porosity features
                         ml_features.update(porosity_features)
                         
-                        # Add fiber features
-                        ml_features.update({
-                            'fiber_type_is_hollow': 1 if fiber_type == 'hollow_fiber' else 0,
-                            'fiber_type_is_filament': 1 if fiber_type == 'filament' else 0,
-                            'scale_detected': 1 if result['scale_detected'] else 0,
-                            'scale_factor': scale_factor
-                        })
+                        # Add crumbly features
+                        ml_features['crumbly_score'] = crumbly_score
+                        ml_features['traditional_confidence'] = confidence
+                        
+                        # Add other analysis features if available
+                        if 'pore_metrics' in crumbly_result:
+                            pore_metrics = crumbly_result['pore_metrics']
+                            ml_features['organized_porosity_score'] = pore_metrics.get('organized_porosity_score', 0.5)
+                            ml_features['mean_pore_circularity'] = pore_metrics.get('mean_pore_circularity', 0.5)
+                        
+                        if 'wall_integrity_metrics' in crumbly_result:
+                            wall_metrics = crumbly_result['wall_integrity_metrics']
+                            ml_features['wall_integrity_score'] = wall_metrics.get('wall_integrity_score', 0.5)
                         
                         result['ml_features'] = ml_features
                         
-                        # Add scale-aware physical features
-                        if scale_factor > 1.0:
-                            physical_features = {}
-                            for key, value in ml_features.items():
-                                if isinstance(value, (int, float)) and value > 0:
-                                    if 'area' in key.lower():
-                                        physical_features[f'{key}_um2'] = value * (scale_factor ** 2)
-                                    elif any(x in key.lower() for x in ['length', 'diameter', 'size']):
-                                        physical_features[f'{key}_um'] = value * scale_factor
-                            result['physical_features'] = physical_features
                     else:
-                        print(f"     ❌ Crumbly analysis returned no result")
-                        result['error'] = "Crumbly analysis returned no result"
-                        return result
+                        print(f"     ❌ Crumbly analysis failed: Invalid result format")
+                        result['error'] = "Crumbly analysis returned invalid result"
                         
                 except Exception as e:
                     print(f"     ❌ Crumbly analysis failed: {e}")
                     result['error'] = f"Crumbly analysis failed: {e}"
-                    import traceback
-                    traceback.print_exc()
-                    return result
             else:
-                result['error'] = "CrumblyDetector not available"
-                return result
-            
-            print(f"     🎉 Processing complete!")
-            
+                print(f"     ⚠️ Crumbly detector not available")
+                result['error'] = "Crumbly detector not available"
+                
         except Exception as e:
             result['error'] = str(e)
             print(f"     ❌ Processing error: {e}")
             import traceback
             traceback.print_exc()
-            return result
         
         return result
     
     def run_evaluation(self, max_images: Optional[int] = None, debug_images: bool = False) -> bool:
-        """
-        Run comprehensive evaluation of the crumbly detector.
-        CORRECTED: Proper method implementation with all fixes.
-        """
+        """Run comprehensive evaluation of the crumbly detector."""
         print(f"\n🚀 STARTING COMPREHENSIVE EVALUATION")
         print("=" * 60)
         
@@ -625,48 +549,38 @@ class CrumblyEvaluationSystem:
     
     def analyze_results(self):
         """Analyze evaluation results and generate metrics."""
-        
         print(f"\n📈 ANALYZING RESULTS")
         print("=" * 40)
         
-        # Get successful results only
         successful_results = [r for r in self.evaluation_results if r['processing_success']]
         
         if not successful_results:
             print("❌ No successful results to analyze!")
+            self.analysis_results = {'overall_accuracy': 0.0}
             return
         
-        # Calculate accuracy metrics
+        # Calculate accuracy
+        correct_predictions = sum(1 for r in successful_results 
+                                if r['predicted_label'] == r['true_label'])
+        accuracy = correct_predictions / len(successful_results)
+        
+        # Generate detailed classification report
         true_labels = [r['true_label'] for r in successful_results]
         predicted_labels = [r['predicted_label'] for r in successful_results]
         
-        # Overall accuracy
-        correct_predictions = sum(1 for t, p in zip(true_labels, predicted_labels) if t == p)
-        overall_accuracy = correct_predictions / len(successful_results)
-        
-        print(f"   Overall accuracy: {overall_accuracy:.3f} ({overall_accuracy*100:.1f}%)")
-        
-        # Per-class accuracy
-        class_accuracies = {}
-        for label in ['not', 'intermediate', 'crumbly']:
-            class_true = [i for i, t in enumerate(true_labels) if t == label]
-            if class_true:
-                class_correct = sum(1 for i in class_true if predicted_labels[i] == label)
-                class_accuracies[label] = class_correct / len(class_true)
-                print(f"   {label.capitalize()} accuracy: {class_accuracies[label]:.3f}")
+        print(f"📊 Overall Accuracy: {accuracy:.3f} ({accuracy*100:.1f}%)")
+        print(f"📊 Classification Report:")
+        print(classification_report(true_labels, predicted_labels))
         
         # Store analysis results
         self.analysis_results = {
-            'overall_accuracy': overall_accuracy,
-            'class_accuracies': class_accuracies,
-            'total_successful': len(successful_results),
+            'overall_accuracy': accuracy,
             'total_images': len(self.evaluation_results),
-            'confusion_matrix': confusion_matrix(true_labels, predicted_labels, 
-                                               labels=['not', 'intermediate', 'crumbly']).tolist(),
-            'classification_report': classification_report(true_labels, predicted_labels, 
-                                                         labels=['not', 'intermediate', 'crumbly'],
-                                                         output_dict=True)
+            'successful_images': len(successful_results),
+            'classification_report': classification_report(true_labels, predicted_labels, output_dict=True)
         }
+        
+        print(f"✅ Analysis complete!")
     
     def save_results(self):
         """Save evaluation results to files."""
@@ -675,65 +589,50 @@ class CrumblyEvaluationSystem:
         
         # Save detailed results
         results_df = pd.DataFrame(self.evaluation_results)
-        detailed_file = self.run_dir / "detailed_results.csv"
-        results_df.to_csv(detailed_file, index=False)
-        print(f"   📊 Detailed results: {detailed_file.name}")
+        results_file = self.run_dir / "detailed_results.csv"
+        results_df.to_csv(results_file, index=False)
+        print(f"   📊 Detailed results: {results_file.name}")
         
         # Save ML features for training
         if self.feature_matrix and self.labels:
-            # Get feature names from first successful result
-            feature_names = []
-            for result in self.evaluation_results:
-                if result.get('processing_success', False) and 'ml_features' in result:
-                    feature_names = list(result['ml_features'].keys())
-                    break
-            
-            if feature_names:
-                features_df = pd.DataFrame(self.feature_matrix, columns=feature_names)
-                features_df['true_label'] = [self.reverse_label_mapping[label] for label in self.labels]
-                features_df['true_label_numeric'] = self.labels
-                
-                ml_features_file = self.run_dir / f"ml_features_{self.timestamp}.csv"
-                features_df.to_csv(ml_features_file, index=False)
-                print(f"   🤖 ML features: {ml_features_file.name}")
+            features_df = pd.DataFrame(self.feature_matrix)
+            features_df['label'] = self.labels
+            features_file = self.run_dir / "ml_features_dataset.csv"
+            features_df.to_csv(features_file, index=False)
+            print(f"   🤖 ML features: {features_file.name}")
         
         # Save analysis summary
-        if self.analysis_results:
-            summary_file = self.run_dir / "analysis_summary.json"
-            with open(summary_file, 'w') as f:
-                json.dump(self.analysis_results, f, indent=2)
-            print(f"   📈 Analysis summary: {summary_file.name}")
+        analysis_file = self.run_dir / "analysis_summary.json"
+        with open(analysis_file, 'w') as f:
+            json.dump(self.analysis_results, f, indent=2, default=str)
+        print(f"   📈 Analysis summary: {analysis_file.name}")
         
         print(f"   📁 All results saved to: {self.run_dir}")
     
     def generate_ml_training_recommendations(self):
-        """Generate recommendations for ML model training."""
-        print(f"\n🤖 ML TRAINING RECOMMENDATIONS")
-        print("=" * 40)
+        """Generate recommendations for ML training."""
+        print(f"\n🎯 ML TRAINING RECOMMENDATIONS")
+        print("=" * 35)
         
-        if not self.analysis_results:
-            print("❌ No analysis results available")
+        if not self.feature_matrix:
+            print("❌ No feature data available for ML training")
             return
         
         accuracy = self.analysis_results.get('overall_accuracy', 0)
         
-        if accuracy < 0.5:
-            print("❌ Current detector accuracy is very low (<50%)")
-            print("   Recommendation: Focus on feature engineering and data collection")
-        elif accuracy < 0.7:
-            print("⚠️ Current detector has moderate accuracy (<70%)")
-            print("   Recommendation: Hybrid ML approach could provide significant improvement")
+        print(f"   Current detector accuracy: {accuracy:.3f} ({accuracy*100:.1f}%)")
+        
+        if accuracy < 0.7:
+            print(f"   ⚠️ Low accuracy detected")
+            print(f"   💡 Recommendations:")
+            print(f"   1. Train hybrid ML model using the features CSV")
+            print(f"   2. Analyze misclassified samples")
+            print(f"   3. Consider implementing hybrid detector")
+            print(f"   4. Use feature analysis for threshold tuning")
         else:
-            print("✅ Current detector has good accuracy (>70%)")
-            print("   Recommendation: ML can fine-tune and provide confidence estimates")
+            print(f"   ✅ Good baseline performance")
+            print(f"   💡 Consider ML enhancement for marginal improvements")
         
-        print(f"\n📋 NEXT STEPS:")
-        print(f"   1. Review the detailed results in {self.run_dir}")
-        print(f"   2. Analyze misclassified samples")
-        print(f"   3. Consider implementing hybrid detector")
-        print(f"   4. Use feature analysis for threshold tuning")
-        
-        # Print module status
         print(f"\n🔧 MODULE STATUS:")
         for module, status in MODULES_LOADED.items():
             status_icon = "✅" if status else "❌"

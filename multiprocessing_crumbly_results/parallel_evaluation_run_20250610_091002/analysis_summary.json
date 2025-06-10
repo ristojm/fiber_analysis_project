@@ -1,0 +1,44 @@
+{
+  "overall_accuracy": 0.6,
+  "total_images": 5,
+  "successful_images": 5,
+  "correct_predictions": 3,
+  "classification_report": {
+    "crumbly": {
+      "precision": 1.0,
+      "recall": 0.6,
+      "f1-score": 0.75,
+      "support": 5.0
+    },
+    "intermediate": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 0.0
+    },
+    "porous": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1-score": 0.0,
+      "support": 0.0
+    },
+    "accuracy": 0.6,
+    "macro avg": {
+      "precision": 0.3333333333333333,
+      "recall": 0.19999999999999998,
+      "f1-score": 0.25,
+      "support": 5.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 0.6,
+      "f1-score": 0.75,
+      "support": 5.0
+    }
+  },
+  "success": true,
+  "processing_time": 31.23346972465515,
+  "dataset_path": "C:/Users/risto/Nextcloud/KalvoTech/Operations/Python/fiber_analysis_project/sample_images/Crumble_test_score",
+  "num_processes_used": 21,
+  "images_per_second": 0.1600846798027402
+}

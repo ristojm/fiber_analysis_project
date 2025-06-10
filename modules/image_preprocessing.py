@@ -304,3 +304,160 @@ def visualize_preprocessing_steps(preprocessing_result: dict, figsize: Tuple[int
     print("Processing Steps Applied:")
     for i, step in enumerate(preprocessing_result.get('processing_steps', []), 1):
         print(f"{i}. {step}")
+
+"""
+Addition to image_preprocessing.py module
+Add these functions to the existing image_preprocessing.py file
+
+This provides the preprocess_for_analysis function that comprehensive_analyzer_main.py
+and other modules need for direct image array processing.
+"""
+
+def preprocess_for_analysis(image: np.ndarray, 
+                           enhance_contrast_method: str = 'clahe',
+                           denoise_method: str = 'bilateral', 
+                           normalize: bool = True,
+                           silent: bool = True) -> np.ndarray:
+    """
+    Preprocess image array optimally for all analysis modules.
+    
+    This function works directly with image arrays (not file paths) and provides
+    the same preprocessing pipeline used by comprehensive_analyzer_main.py.
+    
+    Args:
+        image: Input image as numpy array
+        enhance_contrast_method: Contrast enhancement method ('clahe', 'histogram_eq', 'adaptive_eq')
+        denoise_method: Denoising method ('gaussian', 'bilateral', 'non_local_means', 'wiener')
+        normalize: Whether to normalize intensity values
+        silent: Whether to suppress processing messages
+        
+    Returns:
+        Preprocessed image ready for analysis
+    """
+    try:
+        if not silent:
+            print(f"   Preprocessing image: {image.shape}")
+        
+        # Step 1: Enhance contrast
+        enhanced = enhance_contrast(image, method=enhance_contrast_method)
+        if not silent:
+            print(f"   ✓ Contrast enhancement: {enhance_contrast_method}")
+        
+        # Step 2: Denoise
+        denoised = denoise_image(enhanced, method=denoise_method)
+        if not silent:
+            print(f"   ✓ Denoising: {denoise_method}")
+        
+        # Step 3: Normalize (optional)
+        if normalize:
+            normalized = normalize_image(denoised)
+            if not silent:
+                print(f"   ✓ Intensity normalization")
+            return normalized
+        else:
+            return denoised
+            
+    except Exception as e:
+        if not silent:
+            print(f"   ⚠️ Preprocessing failed, using original image: {e}")
+        return image
+
+def quick_preprocess(image: np.ndarray) -> np.ndarray:
+    """
+    Quick preprocessing with default settings.
+    
+    Args:
+        image: Input image as numpy array
+        
+    Returns:
+        Preprocessed image
+    """
+    return preprocess_for_analysis(image, silent=True)
+
+def preprocess_from_path(image_path: str, 
+                        enhance_contrast_method: str = 'clahe',
+                        denoise_method: str = 'bilateral',
+                        normalize: bool = True,
+                        silent: bool = False) -> np.ndarray:
+    """
+    Load and preprocess image from file path.
+    
+    Convenience function that loads an image and applies preprocessing
+    in one step, returning just the processed image array.
+    
+    Args:
+        image_path: Path to input image
+        enhance_contrast_method: Contrast enhancement method
+        denoise_method: Denoising method  
+        normalize: Whether to normalize intensity
+        silent: Whether to suppress processing messages
+        
+    Returns:
+        Preprocessed image array
+    """
+    try:
+        # Load image
+        if not silent:
+            print(f"Loading image: {image_path}")
+        image = load_image(image_path)
+        
+        if not silent:
+            print(f"✓ Image loaded successfully: {image.shape}")
+        
+        # Preprocess
+        processed = preprocess_for_analysis(
+            image, 
+            enhance_contrast_method=enhance_contrast_method,
+            denoise_method=denoise_method,
+            normalize=normalize,
+            silent=silent
+        )
+        
+        return processed
+        
+    except Exception as e:
+        if not silent:
+            print(f"❌ Error in preprocessing from path: {e}")
+        raise
+
+# Alias for backward compatibility with comprehensive_analyzer_main.py
+def preprocess_image_for_analysis(image: np.ndarray) -> np.ndarray:
+    """
+    Alias for preprocess_for_analysis with default parameters.
+    Used by comprehensive_analyzer_main.py internally.
+    """
+    return preprocess_for_analysis(image, silent=True)
+
+# Test function
+def test_preprocessing_functions():
+    """Test the preprocessing functions with a dummy image."""
+    print("Testing preprocessing functions...")
+    
+    try:
+        # Create a test image
+        test_image = np.random.randint(0, 255, (100, 100), dtype=np.uint8)
+        
+        # Test preprocess_for_analysis
+        processed1 = preprocess_for_analysis(test_image, silent=True)
+        assert processed1.shape == test_image.shape, "Shape mismatch in preprocess_for_analysis"
+        print("✅ preprocess_for_analysis: OK")
+        
+        # Test quick_preprocess
+        processed2 = quick_preprocess(test_image)
+        assert processed2.shape == test_image.shape, "Shape mismatch in quick_preprocess"
+        print("✅ quick_preprocess: OK")
+        
+        # Test preprocess_image_for_analysis
+        processed3 = preprocess_image_for_analysis(test_image)
+        assert processed3.shape == test_image.shape, "Shape mismatch in preprocess_image_for_analysis"
+        print("✅ preprocess_image_for_analysis: OK")
+        
+        print("All preprocessing functions working correctly!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Preprocessing test failed: {e}")
+        return False
+
+if __name__ == "__main__":
+    test_preprocessing_functions()

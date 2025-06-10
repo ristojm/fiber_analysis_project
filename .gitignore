@@ -154,6 +154,7 @@ tests/test_results/*
 analysis_results/*
 .DS_Store
 Thumbs.db
+crumbly_workflow_results/*
 
 # OCR temporary files
 tesseract_temp/

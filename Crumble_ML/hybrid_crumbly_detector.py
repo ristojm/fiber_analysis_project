@@ -19,7 +19,7 @@ warnings.filterwarnings('ignore')
 
 # Import your existing crumbly detector
 try:
-    from crumbly_detection import CrumblyDetector  # Replace with actual import path
+    from modules.crumbly_detection import CrumblyDetector  # Replace with actual import path
 except ImportError:
     print("Warning: Could not import CrumblyDetector. Make sure it's in the correct path.")
     CrumblyDetector = None

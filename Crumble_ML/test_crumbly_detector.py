@@ -18,7 +18,7 @@ sys.path.insert(0, str(project_root / "modules"))
 sys.path.insert(0, str(current_dir))
 
 try:
-    from crumbly_detection import CrumblyDetector
+    from modules.crumbly_detection import CrumblyDetector
     print("✅ CrumblyDetector imported successfully")
 except ImportError as e:
     print(f"❌ CrumblyDetector import failed: {e}")
