@@ -202,15 +202,33 @@ def preprocess_image_for_worker(image):
         return image
 
 def fix_fiber_mask_extraction_worker(image, fiber_analysis_data):
-    """Worker version of fiber mask extraction."""
+    """Worker version of fiber mask extraction - FIXED to match comprehensive_analyzer_main.py"""
+    
+    print(f"   🔧 Extracting fiber mask from analysis data...")
+    print(f"   📊 Analysis data keys: {list(fiber_analysis_data.keys()) if fiber_analysis_data else 'None'}")
+    
+    # Get fiber mask from analysis data (direct format from classify_fiber_type)
     fiber_mask = fiber_analysis_data.get('fiber_mask') if fiber_analysis_data else None
     
     if fiber_mask is not None and isinstance(fiber_mask, np.ndarray):
+        # Ensure proper format
         if fiber_mask.dtype != np.uint8:
             fiber_mask = (fiber_mask > 0).astype(np.uint8) * 255
-        return fiber_mask
+        
+        # Check if mask has sufficient content
+        mask_area = np.sum(fiber_mask > 0)
+        print(f"   ✅ Fiber mask extracted: {mask_area:,} pixels")
+        
+        if mask_area > 1000:  # Reasonable minimum
+            return fiber_mask
+        else:
+            print(f"   ⚠️ Mask too small: {mask_area} pixels")
     else:
-        return np.zeros(image.shape[:2], dtype=np.uint8)
+        print(f"   ❌ No valid fiber mask found in analysis data")
+        print(f"   📊 Fiber mask type: {type(fiber_mask)}")
+    
+    # Return empty mask as fallback
+    return np.zeros(image.shape[:2], dtype=np.uint8)
 
 def process_single_image_worker(worker_args: Dict) -> Dict:
     """
@@ -275,16 +293,23 @@ def process_single_image_worker(worker_args: Dict) -> Dict:
             result['scale_detection'] = {'error': str(e)}
             scale_factor = 1.0
         
-        # Fiber type detection
+         # Fiber type detection (FIXED - Use same API as comprehensive_analyzer_main.py)
         try:
             fiber_detector = FiberTypeDetector()
-            fiber_result = fiber_detector.detect_fiber_type(
-                preprocessed, scale_factor, debug=False
-            )
+            fiber_type, confidence, fiber_analysis_data = fiber_detector.classify_fiber_type(preprocessed)
             
-            # Extract fiber mask
-            fiber_mask = fix_fiber_mask_extraction_worker(preprocessed, fiber_result.get('analysis_data', {}))
-            result['fiber_detection'] = fiber_result
+            # Extract fiber mask using the working method
+            fiber_mask = fix_fiber_mask_extraction_worker(preprocessed, fiber_analysis_data)
+            
+            # Create result structure similar to comprehensive_analyzer_main.py
+            result['fiber_detection'] = {
+                'fiber_type': fiber_type,
+                'confidence': confidence,
+                'total_fibers': fiber_analysis_data.get('total_fibers', 0),
+                'hollow_fibers': fiber_analysis_data.get('hollow_fibers', 0),
+                'filaments': fiber_analysis_data.get('filaments', 0),
+                'method': 'classify_fiber_type'
+            }
             
         except Exception as e:
             result['fiber_detection'] = {'error': str(e)}
@@ -332,6 +357,10 @@ def process_single_image_worker(worker_args: Dict) -> Dict:
             crumbly_detector = CrumblyDetector(porosity_aware=True)
             result['model_type'] = 'traditional'
         
+                # Crumbly texture analysis
+        # REPLACE the crumbly analysis section in process_single_image_worker() function
+# Around line 180-220 in multiprocessing_crumbly_workflow.py
+
         # Crumbly texture analysis
         if MODULES_LOADED['crumbly_detection']:
             try:
@@ -342,17 +371,37 @@ def process_single_image_worker(worker_args: Dict) -> Dict:
                 )
                 
                 if crumbly_result and 'classification' in crumbly_result:
-                    predicted_label = crumbly_result['classification']
-                    confidence = crumbly_result.get('confidence', 0.0)
-                    crumbly_score = crumbly_result.get('crumbly_score', 0.5)
+                    # FIXED: Handle both traditional and hybrid detector results
+                    if result.get('model_type', '') == 'hybrid' and 'traditional_result' in crumbly_result:
+                        # For hybrid detector, extract from traditional_result
+                        traditional_data = crumbly_result['traditional_result']
+                        predicted_label = crumbly_result['classification']  # Use final hybrid prediction
+                        confidence = crumbly_result.get('confidence', 0.0)
+                        crumbly_score = crumbly_result.get('crumbly_score', traditional_data.get('crumbly_score', 0.5))
+                        
+                        # Extract evidence from traditional_result
+                        porous_evidence = traditional_data.get('porous_evidence', 0)
+                        crumbly_evidence = traditional_data.get('crumbly_evidence', 0)
+                        intermediate_evidence = traditional_data.get('intermediate_evidence', 0)
+                        confidence_factors = traditional_data.get('confidence_factors', [])
+                        
+                        # Debug info shows hybrid was used
+                        print(f"     🤖 Using hybrid model for {Path(image_info['path']).name}")
+                    else:
+                        # For traditional detector, use direct results
+                        predicted_label = crumbly_result['classification']
+                        confidence = crumbly_result.get('confidence', 0.0)
+                        crumbly_score = crumbly_result.get('crumbly_score', 0.5)
+                        
+                        # Extract evidence directly
+                        porous_evidence = crumbly_result.get('porous_evidence', 0)
+                        crumbly_evidence = crumbly_result.get('crumbly_evidence', 0)
+                        intermediate_evidence = crumbly_result.get('intermediate_evidence', 0)
+                        confidence_factors = crumbly_result.get('confidence_factors', [])
 
-                    # ADD THIS DEBUG SECTION:
-                    porous_evidence = crumbly_result.get('porous_evidence', 0)
-                    crumbly_evidence = crumbly_result.get('crumbly_evidence', 0)
-                    intermediate_evidence = crumbly_result.get('intermediate_evidence', 0)
-                    confidence_factors = crumbly_result.get('confidence_factors', [])
-                    
+                    # DEBUG SECTION (same for both):
                     print(f"     🔍 DEBUG for {Path(image_info['path']).name}:")
+                    print(f"         Model type: {result.get('model_type', 'unknown')}")
                     print(f"         Porous evidence: {porous_evidence:.3f}")
                     print(f"         Crumbly evidence: {crumbly_evidence:.3f}")
                     print(f"         Intermediate evidence: {intermediate_evidence:.3f}")
@@ -378,36 +427,58 @@ def process_single_image_worker(worker_args: Dict) -> Dict:
                     ml_features['traditional_classification_confidence'] = confidence
 
                     # Original 3 additional features (from training data structure)
-                    # Extract these from the crumbly_result if available
-                    if 'traditional_result' in crumbly_result:
+                    # Extract these from the appropriate result structure
+                    if result.get('model_type', '') == 'hybrid' and 'traditional_result' in crumbly_result:
+                        # Extract from nested traditional_result
                         trad_result = crumbly_result['traditional_result']
                         
                         # Try to get wall integrity score
-                        wall_metrics = trad_result.get('wall_integrity_metrics', {})
-                        ml_features['wall_integrity_score'] = wall_metrics.get('wall_integrity_score', 0.5)
+                        if 'wall_integrity_metrics' in trad_result:
+                            wall_metrics = trad_result['wall_integrity_metrics']
+                            ml_features['wall_integrity_score'] = wall_metrics.get('wall_integrity_score', 0.5)
+                        else:
+                            ml_features['wall_integrity_score'] = 0.5
                         
                         # Try to get organized porosity score
-                        pore_metrics = trad_result.get('pore_metrics', {})
-                        ml_features['organized_porosity_score'] = pore_metrics.get('organized_porosity_score', 0.5)
+                        if 'pore_metrics' in trad_result:
+                            pore_metrics = trad_result['pore_metrics']
+                            ml_features['organized_porosity_score'] = pore_metrics.get('organized_porosity_score', 0.5)
+                        else:
+                            ml_features['organized_porosity_score'] = 0.5
                         
-                        # Try to get boundary circularity
-                        boundary_metrics = trad_result.get('boundary_metrics', {})
-                        ml_features['boundary_circularity'] = boundary_metrics.get('boundary_circularity', 0.5)
+                        # Mean pore circularity
+                        if 'pore_metrics' in trad_result:
+                            pore_metrics = trad_result['pore_metrics']
+                            ml_features['mean_pore_circularity'] = pore_metrics.get('mean_pore_circularity', 0.5)
+                        else:
+                            ml_features['mean_pore_circularity'] = 0.5
+                            
                     else:
-                        # Fallback values
-                        ml_features['wall_integrity_score'] = 0.5
-                        ml_features['organized_porosity_score'] = 0.5
-                        ml_features['boundary_circularity'] = 0.5
-
-                    result['ml_features'] = ml_features
-
+                        # Extract from direct traditional result
+                        if 'wall_integrity_metrics' in crumbly_result:
+                            wall_metrics = crumbly_result['wall_integrity_metrics']
+                            ml_features['wall_integrity_score'] = wall_metrics.get('wall_integrity_score', 0.5)
+                        else:
+                            ml_features['wall_integrity_score'] = 0.5
+                        
+                        if 'pore_metrics' in crumbly_result:
+                            pore_metrics = crumbly_result['pore_metrics']
+                            ml_features['organized_porosity_score'] = pore_metrics.get('organized_porosity_score', 0.5)
+                            ml_features['mean_pore_circularity'] = pore_metrics.get('mean_pore_circularity', 0.5)
+                        else:
+                            ml_features['organized_porosity_score'] = 0.5
+                            ml_features['mean_pore_circularity'] = 0.5
                     
+                    result['ml_features'] = ml_features
                 else:
-                    result['error'] = "Crumbly analysis returned no results"
+                    result['error'] = "Crumbly analysis returned invalid result"
             except Exception as e:
-                result['error'] = f"Crumbly analysis failed: {str(e)}"
+                result['error'] = f"Crumbly analysis failed: {e}"
+                import traceback
+                print(f"     ❌ Crumbly analysis error: {e}")
+                print(f"     Traceback: {traceback.format_exc()}")
         else:
-            result['error'] = "CrumblyDetector not available"
+            result['error'] = "Crumbly detector not available"
         
         # Final timing and memory
         result['total_processing_time'] = time.time() - start_time

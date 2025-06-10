@@ -1100,49 +1100,165 @@ class CrumblyDetector:
             elif wall_integrity > 0.7 and thickness_consistency > 0.6:
                 porous_indicators.append(wall_integrity)
                 confidence_factors.append(f"Intact walls: integrity={wall_integrity:.2f}")
-            else:
-                intermediate_indicators.append(0.5)
+             # Enhanced intermediate wall analysis (REPLACE existing else clause)
+            if not (fragmentation_score > 0.6 and thickness_consistency < 0.3) and not (wall_integrity > 0.7 and thickness_consistency > 0.6):
+                # Calculate intermediate score based on actual values
+                if 0.4 <= wall_integrity <= 0.7:
+                    intermediate_score = 0.3 + (wall_integrity - 0.4) * 0.4  # Scale 0.4-0.7 to 0.3-0.7
+                    intermediate_indicators.append(intermediate_score)
+                    confidence_factors.append(f"Moderate wall integrity: {wall_integrity:.2f}")
+                elif 0.3 <= fragmentation_score <= 0.6:
+                    intermediate_score = 0.4 + fragmentation_score * 0.3
+                    intermediate_indicators.append(intermediate_score)
+                    confidence_factors.append(f"Moderate fragmentation: {fragmentation_score:.2f}")
+                else:
+                    # Fallback for any remaining cases
+                    intermediate_indicators.append(0.5)
+                    confidence_factors.append("Wall metrics in intermediate range")
             
-            # 3. SURFACE TEXTURE ANALYSIS
+            # 3. SURFACE TEXTURE ANALYSIS (FIXED FOR REAL CRUMBLY DETECTION)
             surface_roughness = surface_metrics.get('roughness_metrics', {}).get('kernel_5', {}).get('mean_roughness', 0)
             texture_variation = surface_metrics.get('variation_metrics', {}).get('mean_local_variation', 0)
             
             # Normalize surface roughness (assuming typical range 0-50)
             normalized_roughness = min(1.0, surface_roughness / 30.0)
             
-            # Crumbly surfaces are very rough and irregular
-            if normalized_roughness > 0.7 and texture_variation > 20:
-                crumbly_indicators.append(normalized_roughness)
-                confidence_factors.append(f"Rough surface: roughness={surface_roughness:.1f}")
-            elif normalized_roughness < 0.3:
-                porous_indicators.append(1.0 - normalized_roughness)
+            print(f"   🔍 Surface analysis: roughness={surface_roughness:.1f}, normalized={normalized_roughness:.3f}, variation={texture_variation:.1f}")
             
-            # 4. BOUNDARY ANALYSIS
+            # FIXED: More realistic thresholds for crumbly detection
+            if normalized_roughness > 0.5 and texture_variation > 25:  # LOWERED from 0.7 and increased variation threshold
+                crumbly_score = min(1.0, normalized_roughness + (texture_variation - 25) / 50)  # Scale variation properly
+                crumbly_indicators.append(crumbly_score)
+                confidence_factors.append(f"Rough crumbly surface: roughness={surface_roughness:.1f}, variation={texture_variation:.1f}")
+                print(f"   ✅ CRUMBLY: Surface roughness triggered - score={crumbly_score:.3f}")
+            elif normalized_roughness < 0.15:  # Only very smooth surfaces are porous
+                porous_score = min(0.8, 1.0 - normalized_roughness)
+                porous_indicators.append(porous_score)
+                confidence_factors.append(f"Very smooth surface: roughness={surface_roughness:.1f}")
+                print(f"   ✅ POROUS: Very smooth surface - score={porous_score:.3f}")
+            else:
+                # EXPANDED: More nuanced intermediate handling
+                if texture_variation > 15:  # High variation but moderate roughness
+                    intermediate_score = 0.5 + (texture_variation - 15) / 30  # Scale 15-45 to 0.5-1.0
+                    intermediate_indicators.append(min(0.8, intermediate_score))
+                    confidence_factors.append(f"Moderate surface with high variation: roughness={surface_roughness:.1f}, variation={texture_variation:.1f}")
+                else:
+                    intermediate_score = 0.5 + (normalized_roughness - 0.15) * 0.5  # Scale 0.15-0.5 to 0.5-0.675
+                    intermediate_indicators.append(max(0.4, min(0.7, intermediate_score)))
+                    confidence_factors.append(f"Moderate surface roughness: {surface_roughness:.1f}")
+
+            # 4. BOUNDARY ANALYSIS (FIXED FOR CRUMBLY DETECTION)
             if 'outer_boundary' in boundary_metrics:
                 outer = boundary_metrics['outer_boundary']
                 boundary_roughness = outer.get('roughness_index', 0.5)
                 fractal_dim = outer.get('fractal_dimension', 1.0)
                 
-                # Crumbly fibers have very rough, fractal-like boundaries
-                if boundary_roughness > 0.6 and fractal_dim > 1.5:
-                    crumbly_indicators.append(boundary_roughness)
-                    confidence_factors.append(f"Rough boundary: {boundary_roughness:.2f}")
-                elif boundary_roughness < 0.3:
-                    porous_indicators.append(1.0 - boundary_roughness)
-            
-            # 5. TEXTURE METRICS
+                print(f"   🔍 Boundary analysis: roughness={boundary_roughness:.3f}, fractal={fractal_dim:.3f}")
+                
+                # FIXED: Much more realistic thresholds for crumbly boundaries
+                if boundary_roughness > 0.6:  # LOWERED from requiring both conditions
+                    crumbly_score = min(1.0, boundary_roughness + max(0, fractal_dim - 1.0) * 0.5)
+                    crumbly_indicators.append(crumbly_score)
+                    confidence_factors.append(f"Rough crumbly boundary: {boundary_roughness:.2f}")
+                    print(f"   ✅ CRUMBLY: Boundary roughness triggered - score={crumbly_score:.3f}")
+                elif boundary_roughness < 0.2:  # Only very smooth boundaries are porous
+                    porous_score = min(0.8, 1.0 - boundary_roughness)
+                    porous_indicators.append(porous_score)
+                    confidence_factors.append(f"Very smooth boundary: {boundary_roughness:.2f}")
+                    print(f"   ✅ POROUS: Very smooth boundary - score={porous_score:.3f}")
+                else:
+                    # Intermediate boundary handling
+                    intermediate_score = 0.4 + (boundary_roughness - 0.2) * 0.75  # Scale 0.2-0.6 to 0.4-0.7
+                    intermediate_indicators.append(max(0.4, min(0.7, intermediate_score)))
+                    confidence_factors.append(f"Moderate boundary roughness: {boundary_roughness:.2f}")
+                    print(f"   ➡️ INTERMEDIATE: Moderate boundary - score={intermediate_score:.3f}")
+
+            # 5. TEXTURE METRICS (ENHANCED FOR CRUMBLY DETECTION)
             lbp_entropy = lbp_metrics.get('lbp_entropy', 0)
             glcm_homogeneity = glcm_metrics.get('homogeneity', 0.5)
             edge_density = edge_metrics.get('edge_density', 0.3)
             
-            # Crumbly textures have high entropy, low homogeneity, high edge density
-            if lbp_entropy > 2.5 and glcm_homogeneity < 0.2 and edge_density > 0.7:
-                crumbly_indicators.append(edge_density)
-                confidence_factors.append(f"Chaotic texture: entropy={lbp_entropy:.2f}")
-            elif glcm_homogeneity > 0.6 and edge_density < 0.4:
-                porous_indicators.append(glcm_homogeneity)
+            print(f"   🔍 Texture analysis: lbp_entropy={lbp_entropy:.3f}, homogeneity={glcm_homogeneity:.3f}, edge_density={edge_density:.3f}")
             
-            # 6. CALCULATE SCORES AND CLASSIFY
+            # FIXED: Better crumbly texture detection
+            # Crumbly textures: high entropy OR low homogeneity OR high edge density
+            crumbly_texture_score = 0
+            texture_reasons = []
+            
+            if lbp_entropy > 2.0:  # LOWERED from 2.5
+                crumbly_texture_score += (lbp_entropy - 2.0) / 2.0  # Scale above 2.0
+                texture_reasons.append(f"high_entropy={lbp_entropy:.2f}")
+                
+            if glcm_homogeneity < 0.4:  # RAISED from 0.2 - less homogeneous = more crumbly
+                crumbly_texture_score += (0.4 - glcm_homogeneity) / 0.4
+                texture_reasons.append(f"low_homogeneity={glcm_homogeneity:.2f}")
+                
+            if edge_density > 0.4:  # LOWERED from 0.7
+                crumbly_texture_score += (edge_density - 0.4) / 0.6  # Scale 0.4-1.0
+                texture_reasons.append(f"high_edges={edge_density:.2f}")
+            
+            if crumbly_texture_score > 0.3:  # If any significant crumbly texture evidence
+                crumbly_indicators.append(min(1.0, crumbly_texture_score))
+                confidence_factors.append(f"Crumbly texture: {', '.join(texture_reasons)}")
+                print(f"   ✅ CRUMBLY: Texture analysis triggered - score={crumbly_texture_score:.3f}")
+            elif glcm_homogeneity > 0.7 and edge_density < 0.3:  # Very organized texture
+                porous_indicators.append(glcm_homogeneity)
+                confidence_factors.append(f"Organized texture: homogeneity={glcm_homogeneity:.2f}")
+                print(f"   ✅ POROUS: Organized texture - score={glcm_homogeneity:.3f}")
+            else:
+                # Intermediate texture
+                intermediate_score = 0.5 + abs(0.5 - glcm_homogeneity) * 0.4
+                intermediate_indicators.append(intermediate_score)
+                confidence_factors.append(f"Intermediate texture: homogeneity={glcm_homogeneity:.2f}")
+                print(f"   ➡️ INTERMEDIATE: Mixed texture - score={intermediate_score:.3f}")
+
+            # DETAILED DEBUG: Print all the metric values that drive classification
+            print(f"\n🔬 DETAILED METRICS DEBUG:")
+            print(f"   PORE METRICS:")
+            print(f"     - pore_count: {pore_count}")
+            print(f"     - mean_pore_area: {mean_pore_area:.1f} μm²")
+            print(f"     - pore_circularity: {pore_circularity:.3f}")
+            print(f"     - pore_smoothness: {pore_smoothness:.3f}")
+            print(f"     - pore_organization: {pore_organization:.3f}")
+            
+            print(f"   WALL METRICS:")
+            print(f"     - wall_integrity: {wall_integrity:.3f}")
+            print(f"     - fragmentation_score: {fragmentation_score:.3f}")
+            print(f"     - thickness_consistency: {thickness_consistency:.3f}")
+            
+            print(f"   SURFACE METRICS:")
+            print(f"     - surface_roughness: {surface_roughness:.3f}")
+            print(f"     - normalized_roughness: {normalized_roughness:.3f}")
+            print(f"     - texture_variation: {texture_variation:.3f}")
+            
+            print(f"   BOUNDARY METRICS:")
+            if 'outer_boundary' in boundary_metrics:
+                outer = boundary_metrics['outer_boundary']
+                boundary_roughness = outer.get('roughness_index', 0.5)
+                fractal_dim = outer.get('fractal_dimension', 1.0)
+                print(f"     - boundary_roughness: {boundary_roughness:.3f}")
+                print(f"     - fractal_dimension: {fractal_dim:.3f}")
+            
+            print(f"   TEXTURE METRICS:")
+            print(f"     - lbp_entropy: {lbp_entropy:.3f}")
+            print(f"     - glcm_homogeneity: {glcm_homogeneity:.3f}")
+            print(f"     - edge_density: {edge_density:.3f}")
+            
+            # Show what conditions are being triggered
+            print(f"   CONDITION CHECKS:")
+            print(f"     - Low surface roughness (< 0.3): {normalized_roughness < 0.3} → adds to porous")
+            if 'outer_boundary' in boundary_metrics:
+                outer = boundary_metrics['outer_boundary']
+                boundary_roughness = outer.get('roughness_index', 0.5)
+                print(f"     - Low boundary roughness (< 0.3): {boundary_roughness < 0.3} → adds to porous")
+            print(f"     - High texture homogeneity (> 0.6) & low edge (< 0.4): {glcm_homogeneity > 0.6 and edge_density < 0.4} → adds to porous")
+            
+            print(f"   EVIDENCE ARRAYS BEFORE CALCULATION:")
+            print(f"     - crumbly_indicators: {crumbly_indicators}")
+            print(f"     - porous_indicators: {porous_indicators}")
+            print(f"     - intermediate_indicators: {intermediate_indicators}")
+
+            # 6. CALCULATE SCORES AND CLASSIFY (FIXED LOGIC)
             
             # Weight the evidence
             crumbly_evidence = np.mean(crumbly_indicators) if crumbly_indicators else 0
@@ -1160,26 +1276,65 @@ class CrumblyDetector:
                 porous_evidence = min(1.0, porous_evidence + 0.3)
                 confidence_factors.append("Strong porous indicators detected")
             
-            # Determine classification
+            # FIXED: More balanced classification logic
             max_evidence = max(crumbly_evidence, porous_evidence, intermediate_evidence)
             
-            if crumbly_evidence == max_evidence and crumbly_evidence > 0.5:
+            # Count the number of indicators for each category
+            num_crumbly = len(crumbly_indicators)
+            num_porous = len(porous_indicators)
+            num_intermediate = len(intermediate_indicators)
+            
+            print(f"   🎯 CLASSIFICATION DECISION:")
+            print(f"     - Crumbly: {crumbly_evidence:.3f} from {num_crumbly} indicators")
+            print(f"     - Porous: {porous_evidence:.3f} from {num_porous} indicators")
+            print(f"     - Intermediate: {intermediate_evidence:.3f} from {num_intermediate} indicators")
+            print(f"     - Max evidence: {max_evidence:.3f}")
+            
+            # IMPROVED CLASSIFICATION LOGIC:
+            # 1. If intermediate has most indicators AND significant evidence, prefer intermediate
+            if (num_intermediate >= 2 and intermediate_evidence > 0.4 and 
+                num_intermediate > max(num_crumbly, num_porous)):
+                classification = 'intermediate'
+                confidence = 0.5 + intermediate_evidence * 0.3
+                crumbly_score = 0.5
+                confidence_factors.append(f"Multiple intermediate indicators ({num_intermediate}) dominate")
+                
+            # 2. Strong crumbly evidence
+            elif crumbly_evidence == max_evidence and crumbly_evidence > 0.6:  # RAISED from 0.5
                 classification = 'crumbly'
                 confidence = min(0.95, 0.5 + crumbly_evidence)
                 crumbly_score = crumbly_evidence
-            elif porous_evidence == max_evidence and porous_evidence > 0.4:
+                
+            # 3. Strong porous evidence - MUCH MORE RESTRICTIVE
+            elif (porous_evidence == max_evidence and porous_evidence > 0.7 and  # RAISED from 0.4 to 0.7
+                  num_porous >= 2):  # ADDED: Require multiple porous indicators
                 classification = 'porous'
                 confidence = min(0.95, 0.5 + porous_evidence)
                 crumbly_score = 0.2  # Low crumbly score for porous
+                confidence_factors.append(f"Multiple strong porous indicators")
+                
+            # 4. Weak porous evidence with strong intermediate - choose intermediate
+            elif (porous_evidence > 0.4 and intermediate_evidence > 0.4 and 
+                  num_porous == 1 and num_intermediate >= 2):
+                classification = 'intermediate'  
+                confidence = 0.4 + intermediate_evidence * 0.4
+                crumbly_score = 0.5
+                confidence_factors.append("Weak porous evidence, strong intermediate evidence")
+                
+            # 5. Default to intermediate for unclear cases
             else:
                 classification = 'intermediate'
                 confidence = 0.4 + intermediate_evidence * 0.4
-                crumbly_score = 0.5  # Middle score for intermediate
+                crumbly_score = 0.5
+                confidence_factors.append(f"Unclear evidence pattern - defaulting to intermediate")
+            
+            print(f"     - DECISION: {classification} (confidence: {confidence:.3f})")
             
             # Adjust confidence based on evidence strength
             total_indicators = len(crumbly_indicators) + len(porous_indicators) + len(intermediate_indicators)
             if total_indicators > 5:
                 confidence = min(0.98, confidence + 0.1)
+                confidence_factors.append("High indicator count boost")
             
             return {
                 'classification': classification,
