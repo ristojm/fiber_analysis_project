@@ -13,6 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 import argparse
+from typing import Dict
 
 # Add project paths (same as multiprocessing script)
 project_root = Path(__file__).parent.parent
@@ -44,22 +45,172 @@ except ImportError:
     HAS_ENHANCED_PREPROCESSING = False
     print("⚠️ Using fallback preprocessing")
 
+# ===== MODULE AVAILABILITY TRACKING =====
+MODULES_LOADED = {}
+POROSITY_TYPE = None
+
+# Track which modules are available (same pattern as multiprocessing workflow)
+try:
+    from modules.scale_detection import ScaleBarDetector
+    from modules.fiber_type_detection import FiberTypeDetector
+    from modules.image_preprocessing import load_image
+    MODULES_LOADED['core'] = True
+    print("✅ Core modules loaded")
+except ImportError as e:
+    print(f"❌ Core modules failed: {e}")
+    MODULES_LOADED['core'] = False
+
+# Porosity analysis
+try:
+    from modules.porosity_analysis import PorosityAnalyzer, analyze_fiber_porosity
+    MODULES_LOADED['porosity_analysis'] = True
+    POROSITY_TYPE = 'fast_refined'
+    print("✅ Porosity analysis loaded")
+except ImportError:
+    try:
+        from modules.porosity_analysis import quick_porosity_check
+        MODULES_LOADED['porosity_analysis'] = True
+        POROSITY_TYPE = 'basic'
+        print("✅ Basic porosity analysis loaded")
+    except ImportError:
+        MODULES_LOADED['porosity_analysis'] = False
+        POROSITY_TYPE = None
+        print("❌ No porosity analysis available")
+
+# Crumbly detection
+try:
+    from modules.crumbly_detection import CrumblyDetector
+    MODULES_LOADED['crumbly_detection'] = True
+    print("✅ Crumbly detection loaded")
+except ImportError as e:
+    print(f"❌ Crumbly detection failed: {e}")
+    MODULES_LOADED['crumbly_detection'] = False
+
+# Try enhanced preprocessing
+try:
+    from modules.image_preprocessing import preprocess_for_analysis
+    HAS_ENHANCED_PREPROCESSING = True
+    print("✅ Enhanced preprocessing available")
+except ImportError:
+    from modules.image_preprocessing import enhance_contrast, denoise_image, normalize_image
+    HAS_ENHANCED_PREPROCESSING = False
+    print("⚠️ Using fallback preprocessing")
+
 def preprocess_image_for_debug(image):
-    """Same preprocessing as multiprocessing script."""
+    """Same preprocessing as multiprocessing script with scale bar removal."""
     try:
         if HAS_ENHANCED_PREPROCESSING:
-            return preprocess_for_analysis(image, silent=True)
+            temp_processed = preprocess_for_analysis(image, silent=True)
         else:
             enhanced = enhance_contrast(image, method='clahe')
             denoised = denoise_image(enhanced, method='bilateral')
-            normalized = normalize_image(denoised)
-            return normalized
+            temp_processed = normalize_image(denoised)
+        
+        # Remove scale bar region
+        from modules.image_preprocessing import remove_scale_bar_region
+        main_region, scale_bar_region = remove_scale_bar_region(temp_processed)
+        return main_region
+        
     except Exception as e:
         print(f"⚠️ Preprocessing error: {e}")
-        return image
+        # Fallback: manual crop of bottom 15% where scale bars typically are
+        height = image.shape[0]
+        crop_height = int(height * 0.95)  # Remove bottom 5%
+        return image[:crop_height, :]
+
+def create_optimal_fiber_mask(image: np.ndarray, fiber_analysis_data: dict, debug: bool = False) -> np.ndarray:
+    """
+    Create the optimal fiber mask that:
+    1. Uses the precise fiber contour (no background noise)
+    2. Excludes the lumen for hollow fibers
+    3. Only includes the actual fiber wall for analysis
+    """
+    
+    if debug:
+        print(f"   🔧 Creating optimal fiber mask...")
+    
+    if not fiber_analysis_data:
+        return np.zeros(image.shape[:2], dtype=np.uint8)
+    
+    # Get individual results to find the best fiber
+    individual_results = fiber_analysis_data.get('individual_results', [])
+    
+    if individual_results and len(individual_results) > 0:
+        # Find the largest fiber
+        largest_fiber_result = max(individual_results, key=lambda x: x['fiber_properties']['area'])
+        
+        # Get fiber contour
+        fiber_props = largest_fiber_result.get('fiber_properties', {})
+        fiber_contour = fiber_props.get('contour')
+        
+        if fiber_contour is not None:
+            # Create base mask from contour (precise boundary, no background noise)
+            fiber_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+            cv2.fillPoly(fiber_mask, [fiber_contour], 255)
+            
+            # Check if this fiber has a lumen
+            has_lumen = largest_fiber_result.get('has_lumen', False)
+            
+            if has_lumen:
+                if debug:
+                    print(f"   🕳️ Hollow fiber detected, excluding lumen...")
+                
+                # Get lumen properties if available
+                lumen_props = largest_fiber_result.get('lumen_properties', {})
+                lumen_contour = lumen_props.get('contour')
+                
+                if lumen_contour is not None:
+                    # Method 1: Use detected lumen contour
+                    lumen_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+                    cv2.fillPoly(lumen_mask, [lumen_contour], 255)
+                    # Remove lumen from fiber mask
+                    fiber_mask[lumen_mask > 0] = 0
+                    
+                    if debug:
+                        lumen_area = np.sum(lumen_mask > 0)
+                        print(f"   ✅ Lumen excluded using contour: {lumen_area:,} pixels")
+                else:
+                    # Method 2: Detect lumen using intensity
+                    fiber_region = image.copy()
+                    fiber_region[fiber_mask == 0] = 255  # Set non-fiber to white
+                    
+                    # Find very dark regions within fiber (likely lumen)
+                    if np.sum(fiber_mask > 0) > 0:
+                        lumen_threshold = np.percentile(fiber_region[fiber_mask > 0], 10)  # Bottom 10%
+                        potential_lumen = (fiber_region < lumen_threshold) & (fiber_mask > 0)
+                        
+                        # Clean up lumen detection with morphology
+                        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (11, 11))
+                        potential_lumen = cv2.morphologyEx(potential_lumen.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+                        potential_lumen = cv2.morphologyEx(potential_lumen, cv2.MORPH_OPEN, kernel)
+                        
+                        # Remove detected lumen from fiber mask
+                        fiber_mask[potential_lumen > 0] = 0
+                        
+                        if debug:
+                            lumen_area = np.sum(potential_lumen > 0)
+                            print(f"   ✅ Lumen excluded using intensity: {lumen_area:,} pixels")
+            
+            final_area = np.sum(fiber_mask > 0)
+            if debug:
+                print(f"   ✅ Final analysis mask: {final_area:,} pixels")
+            
+            return fiber_mask
+    
+    # Fallback to general mask
+    if debug:
+        print(f"   ⚠️ Using fallback general mask")
+    
+    fiber_mask = fiber_analysis_data.get('fiber_mask')
+    if fiber_mask is not None and isinstance(fiber_mask, np.ndarray):
+        if fiber_mask.dtype != np.uint8:
+            fiber_mask = (fiber_mask > 0).astype(np.uint8) * 255
+        return fiber_mask
+    else:
+        return np.zeros(image.shape[:2], dtype=np.uint8)
 
 def show_step_by_step_analysis(image_path: str):
-    """Show visual analysis step by step with popup windows."""
+    """Show visual analysis step by step with popup windows - FIXED ORDER."""
     
     print(f"\n🔍 VISUAL ANALYSIS: {Path(image_path).name}")
     print("=" * 60)
@@ -77,17 +228,8 @@ def show_step_by_step_analysis(image_path: str):
     plt.title(f'Original Image\n{Path(image_path).name}')
     plt.axis('off')
     
-    # Step 2: Preprocessing
-    print("🔧 Step 2: Preprocessing...")
-    preprocessed = preprocess_image_for_debug(original_image)
-    
-    plt.subplot(2, 3, 2)
-    plt.imshow(preprocessed, cmap='gray')
-    plt.title('Preprocessed Image')
-    plt.axis('off')
-    
-    # Step 3: Scale detection
-    print("📏 Step 3: Scale detection...")
+    # Step 2: Scale detection FIRST (needs original image with scale bar)
+    print("📏 Step 2: Scale detection...")
     scale_factor = 1.0
     try:
         scale_detector = ScaleBarDetector(use_enhanced_detection=True)
@@ -102,73 +244,81 @@ def show_step_by_step_analysis(image_path: str):
     except Exception as e:
         print(f"   ❌ Scale detection error: {e}")
     
-    # Step 4: Fiber detection
+    # Step 3: Preprocessing with scale bar removal
+    print("🔧 Step 3: Preprocessing with scale bar removal...")
+    preprocessed = preprocess_image_for_debug(original_image)
+    
+    print(f"   Original shape: {original_image.shape}")
+    print(f"   Preprocessed shape: {preprocessed.shape}")
+    
+    plt.subplot(2, 3, 2)
+    plt.imshow(preprocessed, cmap='gray')
+    plt.title('Preprocessed Image\n(Scale bar removed)')
+    plt.axis('off')
+    
+    # Step 4: Fiber detection (on clean preprocessed image)
     print("🧬 Step 4: Fiber detection...")
     try:
         fiber_detector = FiberTypeDetector()
         fiber_type, confidence, fiber_analysis_data = fiber_detector.classify_fiber_type(preprocessed)
         
-        # Extract fiber mask (same as multiprocessing script)
-        fiber_mask = fiber_analysis_data.get('fiber_mask') if fiber_analysis_data else None
+        # Extract fiber mask using the proper extraction logic
+        fiber_mask = create_optimal_fiber_mask(preprocessed, fiber_analysis_data, debug=True)
         
-        if fiber_mask is not None and isinstance(fiber_mask, np.ndarray):
-            if fiber_mask.dtype != np.uint8:
-                fiber_mask = (fiber_mask > 0).astype(np.uint8) * 255
-            
-            mask_area = np.sum(fiber_mask > 0)
-            print(f"   ✅ Fiber mask extracted: {mask_area:,} pixels")
-            print(f"   Fiber type: {fiber_type} (confidence: {confidence:.3f})")
-        else:
-            print(f"   ❌ No valid fiber mask found")
-            fiber_mask = np.zeros(preprocessed.shape[:2], dtype=np.uint8)
-            
+        mask_area = np.sum(fiber_mask > 0)
+        print(f"   ✅ Fiber mask extracted: {mask_area:,} pixels")
+        print(f"   Fiber type: {fiber_type} (confidence: {confidence:.3f})")
+        print(f"   Mask shape: {fiber_mask.shape} (should match preprocessed)")
+        
+        # Create visualization overlay (dimensions now guaranteed to match)
+        overlay = cv2.cvtColor(preprocessed, cv2.COLOR_GRAY2RGB)
+        overlay[fiber_mask > 0] = [0, 255, 0]  # Green for fiber
+        
+        plt.subplot(2, 3, 3)
+        plt.imshow(overlay)
+        plt.title(f'Fiber Segmentation\n{mask_area:,} pixels')
+        plt.axis('off')
+        
     except Exception as e:
-        print(f"   ❌ Fiber detection failed: {e}")
+        print(f"   ❌ Fiber detection error: {e}")
         fiber_mask = np.zeros(preprocessed.shape[:2], dtype=np.uint8)
+        fiber_type = "error"
+        confidence = 0.0
+        mask_area = 0
     
-    # Show fiber mask
-    plt.subplot(2, 3, 3)
-    # Create colored overlay
-    overlay = np.zeros((*original_image.shape, 3), dtype=np.uint8)
-    overlay[fiber_mask > 0] = [0, 255, 0]  # Green for fiber
-    
-    # Blend with original
-    if len(original_image.shape) == 2:
-        orig_color = cv2.cvtColor(original_image, cv2.COLOR_GRAY2RGB)
-    else:
-        orig_color = original_image
-    
-    blended = cv2.addWeighted(orig_color, 0.7, overlay, 0.3, 0)
-    plt.imshow(blended)
-    plt.title(f'Fiber Segmentation\n{np.sum(fiber_mask > 0):,} pixels')
-    plt.axis('off')
-    
-    # Step 5: Porosity analysis
-    print("💧 Step 5: Porosity analysis...")
+    # Step 5: Porosity analysis (on clean image and matching mask)
+    print("🔬 Step 5: Porosity analysis...")
     porosity_result = None
     try:
-        porosity_result = analyze_fiber_porosity(preprocessed, fiber_mask, scale_factor)
-        
-        if porosity_result and porosity_result.get('success', False):
-            porosity_metrics = porosity_result.get('porosity_metrics', {})
-            total_porosity = porosity_metrics.get('total_porosity_percent', 0)
-            pore_count = porosity_metrics.get('pore_count', 0)
-            avg_pore_size = porosity_metrics.get('average_pore_size_um2', 0)
+        if MODULES_LOADED.get('porosity_analysis', False):
+            if POROSITY_TYPE == 'fast_refined':
+                porosity_result = analyze_fiber_porosity(preprocessed, fiber_mask, scale_factor)
+            elif POROSITY_TYPE == 'basic':
+                porosity_result = quick_porosity_check(preprocessed, fiber_mask, scale_factor)
+            else:
+                # Fallback
+                porosity_analyzer = PorosityAnalyzer()
+                porosity_result = porosity_analyzer.analyze_fiber_porosity(
+                    preprocessed, fiber_mask, scale_factor
+                )
             
-            print(f"   ✅ Porosity analysis successful:")
-            print(f"     Total porosity: {total_porosity:.2f}%")
-            print(f"     Pore count: {pore_count}")
-            print(f"     Average pore size: {avg_pore_size:.2f} μm²")
+            if porosity_result:
+                porosity_metrics = porosity_result.get('porosity_metrics', {})
+                total_porosity = porosity_metrics.get('total_porosity_percent', 0)
+                pore_count = porosity_metrics.get('pore_count', 0)
+                avg_pore_size = porosity_metrics.get('average_pore_size_um2', 0)
+                
+                print(f"   ✅ Porosity: {total_porosity:.2f}%")
+                print(f"   ✅ Pore count: {pore_count}")
+                print(f"   ✅ Avg pore size: {avg_pore_size:.1f} μm²")
         else:
-            print(f"   ❌ Porosity analysis failed")
-            
+            print("   ⚠️ Porosity analysis not available")
     except Exception as e:
         print(f"   ❌ Porosity analysis error: {e}")
-    
-    # Show porosity visualization if available
+                
+    # Show porosity visualization
     plt.subplot(2, 3, 4)
     if porosity_result and 'visualization_data' in porosity_result:
-        # If porosity result has visualization data, use it
         pore_overlay = porosity_result['visualization_data'].get('pore_overlay')
         if pore_overlay is not None:
             plt.imshow(pore_overlay)
@@ -177,94 +327,102 @@ def show_step_by_step_analysis(image_path: str):
             plt.imshow(preprocessed, cmap='gray')
             plt.title('Porosity Analysis\n(No visualization data)')
     else:
-        # Create simple pore visualization
-        # Find dark regions in fiber mask as potential pores
+        # Simple pore visualization fallback
         fiber_region = preprocessed.copy()
         fiber_region[fiber_mask == 0] = 255  # Set non-fiber to white
         
-        # Simple threshold for pores
-        pore_threshold = np.percentile(fiber_region[fiber_mask > 0], 30)
-        pore_candidates = (fiber_region < pore_threshold) & (fiber_mask > 0)
-        
-        # Show pore candidates
-        plt.imshow(pore_candidates, cmap='hot')
-        plt.title(f'Pore Candidates\n(Threshold: {pore_threshold:.0f})')
+        if np.sum(fiber_mask > 0) > 0:
+            pore_threshold = np.percentile(fiber_region[fiber_mask > 0], 30)
+            pore_candidates = (fiber_region < pore_threshold) & (fiber_mask > 0)
+            plt.imshow(pore_candidates, cmap='hot')
+            plt.title(f'Pore Candidates\n(Threshold: {pore_threshold:.0f})')
+        else:
+            plt.imshow(preprocessed, cmap='gray')
+            plt.title('No Fiber Detected')
     plt.axis('off')
     
     # Step 6: Crumbly texture analysis
     print("🧩 Step 6: Crumbly texture analysis...")
     try:
-        crumbly_detector = CrumblyDetector(porosity_aware=True)
-        fiber_mask_bool = fiber_mask > 127
-        
-        # Pass porosity data (same as multiprocessing script)
-        porosity_data = {'porosity_metrics': porosity_result.get('porosity_metrics', {})} if porosity_result else {}
-        
-        crumbly_result = crumbly_detector.analyze_crumbly_texture(
-            preprocessed, fiber_mask_bool, None, scale_factor, 
-            debug=False, porosity_data=porosity_data
-        )
-        
-        if crumbly_result and 'classification' in crumbly_result:
-            classification = crumbly_result['classification']
-            confidence = crumbly_result.get('confidence', 0.0)
-            crumbly_score = crumbly_result.get('crumbly_score', 0.5)
+        if MODULES_LOADED.get('crumbly_detection', False):
+            crumbly_detector = CrumblyDetector(porosity_aware=True)
+            fiber_mask_bool = fiber_mask > 127
             
-            # Get evidence
-            porous_evidence = crumbly_result.get('porous_evidence', 0)
-            crumbly_evidence = crumbly_result.get('crumbly_evidence', 0)
-            intermediate_evidence = crumbly_result.get('intermediate_evidence', 0)
+            # Pass porosity data
+            porosity_data = {'porosity_metrics': porosity_result.get('porosity_metrics', {})} if porosity_result else {}
             
-            print(f"   ✅ Crumbly analysis result:")
-            print(f"     Classification: {classification}")
-            print(f"     Confidence: {confidence:.3f}")
-            print(f"     Crumbly score: {crumbly_score:.3f}")
-            print(f"     Evidence - Porous: {porous_evidence:.3f}, Crumbly: {crumbly_evidence:.3f}, Intermediate: {intermediate_evidence:.3f}")
+            crumbly_result = crumbly_detector.analyze_crumbly_texture(
+                preprocessed, fiber_mask_bool, None, scale_factor, 
+                debug=False, porosity_data=porosity_data
+            )
+            
+            if crumbly_result and 'classification' in crumbly_result:
+                classification = crumbly_result['classification']
+                confidence_score = crumbly_result.get('confidence', 0.0)
+                crumbly_score = crumbly_result.get('crumbly_score', 0.5)
+                
+                print(f"   ✅ Classification: {classification}")
+                print(f"   ✅ Confidence: {confidence_score:.3f}")
+                print(f"   ✅ Crumbly score: {crumbly_score:.3f}")
+                
+                # Show texture analysis result on FIBER REGION ONLY
+                plt.subplot(2, 3, 5)
+                
+                # Create texture visualization
+                texture_vis = preprocessed.copy()
+                texture_vis[fiber_mask == 0] = 128  # Set background to gray
+                
+                # If crumbly result has visualization data, use it
+                if 'visualization_data' in crumbly_result:
+                    vis_data = crumbly_result['visualization_data']
+                    if 'texture_overlay' in vis_data:
+                        plt.imshow(vis_data['texture_overlay'])
+                    else:
+                        plt.imshow(texture_vis, cmap='gray')
+                else:
+                    # Create basic texture visualization
+                    # Highlight texture features within fiber mask
+                    edges = cv2.Canny(texture_vis, 50, 150)
+                    edges_masked = edges.copy()
+                    edges_masked[fiber_mask == 0] = 0
+                    
+                    # Create colored overlay
+                    texture_overlay = cv2.cvtColor(texture_vis, cv2.COLOR_GRAY2RGB)
+                    texture_overlay[edges_masked > 0] = [255, 255, 0]  # Yellow for edges
+                    plt.imshow(texture_overlay)
+                
+                plt.title(f'Texture Analysis\n{classification} ({confidence_score:.2f})\nFiber region only')
+                plt.axis('off')
+                
+                # Show summary
+                plt.subplot(2, 3, 6)
+                plt.text(0.1, 0.8, f"Image: {Path(image_path).name}", fontsize=10, weight='bold')
+                plt.text(0.1, 0.7, f"Scale: {scale_factor:.4f} μm/pixel", fontsize=9)
+                plt.text(0.1, 0.6, f"Fiber type: {fiber_type}", fontsize=9)
+                plt.text(0.1, 0.5, f"Confidence: {confidence:.3f}", fontsize=9)
+                if porosity_result:
+                    plt.text(0.1, 0.4, f"Porosity: {total_porosity:.2f}%", fontsize=9)
+                    plt.text(0.1, 0.3, f"Pores: {pore_count}", fontsize=9)
+                plt.text(0.1, 0.2, f"Texture: {classification}", fontsize=9)
+                plt.text(0.1, 0.1, f"Crumbly score: {crumbly_score:.3f}", fontsize=9)
+                plt.xlim(0, 1)
+                plt.ylim(0, 1)
+                plt.axis('off')
+                plt.title('Analysis Summary')
+            else:
+                print("   ❌ Crumbly analysis failed")
         else:
-            print(f"   ❌ Crumbly analysis failed")
-            classification = "error"
-            confidence = 0.0
-            
+            print("   ⚠️ Crumbly detection not available")
     except Exception as e:
         print(f"   ❌ Crumbly analysis error: {e}")
-        classification = "error"
-        confidence = 0.0
-    
-    # Show final classification
-    plt.subplot(2, 3, 5)
-    plt.imshow(preprocessed, cmap='gray')
-    plt.title(f'Final Classification\n{classification} (conf: {confidence:.2f})')
-    plt.axis('off')
-    
-    # Summary text
-    plt.subplot(2, 3, 6)
-    plt.axis('off')
-    
-    summary_text = f"ANALYSIS SUMMARY\n\n"
-    summary_text += f"Image: {Path(image_path).name}\n"
-    summary_text += f"Scale: {scale_factor:.4f} μm/pixel\n"
-    summary_text += f"Fiber mask: {np.sum(fiber_mask > 0):,} pixels\n\n"
-    
-    if porosity_result:
-        porosity_metrics = porosity_result.get('porosity_metrics', {})
-        summary_text += f"POROSITY:\n"
-        summary_text += f"  Total: {porosity_metrics.get('total_porosity_percent', 0):.2f}%\n"
-        summary_text += f"  Pores: {porosity_metrics.get('pore_count', 0)}\n"
-        summary_text += f"  Avg size: {porosity_metrics.get('average_pore_size_um2', 0):.1f} μm²\n\n"
-    
-    summary_text += f"CLASSIFICATION:\n"
-    summary_text += f"  Result: {classification}\n"
-    summary_text += f"  Confidence: {confidence:.3f}\n"
-    
-    plt.text(0.05, 0.95, summary_text, transform=plt.gca().transAxes,
-             fontsize=10, verticalalignment='top', fontfamily='monospace',
-             bbox=dict(boxstyle="round,pad=0.5", facecolor='lightblue'))
     
     plt.tight_layout()
-    plt.suptitle(f'Visual Analysis: {Path(image_path).name}', fontsize=14)
-    
-    print(f"\n📊 Analysis complete! Close the window to continue...")
     plt.show()
+    
+    print("\n" + "=" * 60)
+    print("✅ Visual analysis complete!")
+
+# Add this function to your visual_debug_test.py file (before show_step_by_step_analysis)
 
 def create_detailed_porosity_view(image_path: str):
     """Create detailed porosity analysis view."""
@@ -335,15 +493,20 @@ def create_detailed_porosity_view(image_path: str):
             
             # Clean up with morphology
             kernel = np.ones((3, 3), np.uint8)
-            pore_candidates = cv2.morphologyEx(pore_candidates.astype(np.uint8), cv2.MORPH_OPEN, kernel)
-            pore_candidates = cv2.morphologyEx(pore_candidates, cv2.MORPH_CLOSE, kernel)
+            pore_candidates_clean = cv2.morphologyEx(pore_candidates.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+            pore_candidates_clean = cv2.morphologyEx(pore_candidates_clean, cv2.MORPH_CLOSE, kernel)
             
-            # Find contours and count
-            contours, _ = cv2.findContours(pore_candidates, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Find contours and count ACTUAL pores
+            contours, _ = cv2.findContours(pore_candidates_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             valid_pores = [c for c in contours if cv2.contourArea(c) > 10]  # Min 10 pixels
             
-            plt.imshow(pore_candidates, cmap='hot')
-            plt.title(f'{percentile}th Percentile\nThreshold: {threshold:.0f}\nPores: {len(valid_pores)}')
+            # Create visualization showing ONLY the valid pores, not all dark regions
+            pore_visualization = np.zeros_like(fiber_region)
+            for contour in valid_pores:
+                cv2.fillPoly(pore_visualization, [contour], 255)
+            
+            plt.imshow(pore_visualization, cmap='hot')
+            plt.title(f'{percentile}th Percentile\nThreshold: {threshold:.0f}\nValid Pores: {len(valid_pores)}')
             plt.axis('off')
     
     plt.tight_layout()

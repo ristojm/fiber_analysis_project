@@ -583,6 +583,73 @@ class FiberTypeDetector:
         except Exception as e:
             return False
     
+    def _create_optimal_analysis_mask(self, image: np.ndarray, 
+                                    analysis_results: List[Dict], 
+                                    fiber_type: str) -> np.ndarray:
+        """
+        Create optimal analysis mask from the best selected fiber.
+        
+        Args:
+            image: Input image
+            analysis_results: Individual fiber analysis results
+            fiber_type: Classified fiber type
+            
+        Returns:
+            Optimal mask for analysis (clean boundary, lumen excluded for hollow fibers)
+        """
+        if not analysis_results:
+            return np.zeros(image.shape[:2], dtype=np.uint8)
+        
+        # Find the largest fiber (same selection logic as classification)
+        largest_fiber_result = max(analysis_results, key=lambda x: x['fiber_properties']['area'])
+        
+        # Get fiber contour
+        fiber_props = largest_fiber_result.get('fiber_properties', {})
+        fiber_contour = fiber_props.get('contour')
+        
+        if fiber_contour is None:
+            return np.zeros(image.shape[:2], dtype=np.uint8)
+        
+        # Create precise mask from selected fiber contour
+        optimal_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+        cv2.fillPoly(optimal_mask, [fiber_contour], 255)
+        
+        # For hollow fibers, exclude the lumen
+        if fiber_type == 'hollow_fiber':
+            has_lumen = largest_fiber_result.get('has_lumen', False)
+            
+            if has_lumen:
+                lumen_props = largest_fiber_result.get('lumen_properties', {})
+                lumen_contour = lumen_props.get('contour')
+                
+                if lumen_contour is not None:
+                    # Use detected lumen contour
+                    lumen_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+                    cv2.fillPoly(lumen_mask, [lumen_contour], 255)
+                    optimal_mask[lumen_mask > 0] = 0
+                else:
+                    # Fallback: detect lumen using intensity
+                    fiber_region = image.copy()
+                    fiber_region[optimal_mask == 0] = 255
+                    
+                    if np.sum(optimal_mask > 0) > 0:
+                        # Find very dark regions (likely lumen)
+                        lumen_threshold = np.percentile(fiber_region[optimal_mask > 0], 8)
+                        potential_lumen = (fiber_region < lumen_threshold) & (optimal_mask > 0)
+                        
+                        # Clean up with morphology
+                        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
+                        potential_lumen = cv2.morphologyEx(potential_lumen.astype(np.uint8), 
+                                                         cv2.MORPH_CLOSE, kernel)
+                        potential_lumen = cv2.morphologyEx(potential_lumen, 
+                                                         cv2.MORPH_OPEN, kernel)
+                        
+                        # Remove lumen from analysis mask
+                        optimal_mask[potential_lumen > 0] = 0
+        
+        return optimal_mask
+
+
     def classify_fiber_type(self, image: np.ndarray, scale_factor: float = 1.0) -> Tuple[str, float, Dict]:
         """
         Enhanced fiber type classification with comprehensive oval fitting analysis.
@@ -635,21 +702,25 @@ class FiberTypeDetector:
             hollow_count = sum(1 for result in analysis_results if result['has_lumen'])
             total_count = len(analysis_results)
             
+            # Create optimal analysis mask from the selected best fiber
+            optimal_fiber_mask = self._create_optimal_analysis_mask(
+                image, analysis_results, final_type
+            )
+            
             # ENHANCED: Analysis data with comprehensive oval fitting information
             analysis_data = {
                 'total_fibers': total_count,
                 'hollow_fibers': hollow_count,
                 'filaments': total_count - hollow_count,
-                'fiber_mask': fiber_mask,
+                'fiber_mask': optimal_fiber_mask,  # ← FIXED: Use optimal mask
+                'general_fiber_mask': fiber_mask,  # Keep original for reference
                 'individual_results': analysis_results,
                 'preprocessed_image': preprocessed,
                 'thresholds': thresholds,
                 'classification_method': 'adaptive_largest_fiber_with_oval_fitting',
-                'mask_area_pixels': int(np.sum(fiber_mask > 0)),
-                'mask_coverage_percent': float(np.sum(fiber_mask > 0) / fiber_mask.size * 100),
-                'scale_factor_used': scale_factor,  # NEW: Record scale factor used
-                # NEW: Aggregate oval fitting statistics (now in micrometers)
-                'oval_fitting_summary': self._calculate_oval_fitting_summary(analysis_results, scale_factor)
+                'mask_area_pixels': int(np.sum(optimal_fiber_mask > 0)),
+                'mask_coverage_percent': float(np.sum(optimal_fiber_mask > 0) / optimal_fiber_mask.size * 100),
+                'scale_factor_used': scale_factor,
             }
             
             return final_type, final_confidence, analysis_data
