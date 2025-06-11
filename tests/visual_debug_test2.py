@@ -284,71 +284,24 @@ def show_step_by_step_analysis(image_path: str, model_path: str = None):
             )
             
             if crumbly_result and 'classification' in crumbly_result:
-                # Apply classification improvements (SAME function as workflow - FIXED VERSION)
-                print(f"   🔧 Applying FIXED classification improvements...")
-                
-                # Store original values FIRST
+                # Apply classification improvements (SAME function as workflow)
+                print(f"   🔧 Applying classification improvements...")
                 original_classification = crumbly_result['classification']
                 original_confidence = crumbly_result.get('confidence', 0.0)
                 original_score = crumbly_result.get('crumbly_score', 0.5)
                 
-                # Extract correct values for override logic (same as multiprocessing workflow)
-                surface_metrics = crumbly_result.get('surface_metrics', {})
-                boundary_metrics = crumbly_result.get('boundary_metrics', {})
-                wall_metrics = crumbly_result.get('wall_integrity_metrics', {})
-                
-                # Extract using correct structure
-                surface_roughness_corrected = 0
-                if 'roughness_metrics' in surface_metrics:
-                    roughness_data = surface_metrics['roughness_metrics']
-                    if 'kernel_5' in roughness_data:
-                        surface_roughness_corrected = float(roughness_data['kernel_5'].get('mean_roughness', 0))
-                
-                edge_irregularity_corrected = 0
-                if 'outer_boundary' in boundary_metrics:
-                    outer_boundary = boundary_metrics['outer_boundary']
-                    edge_irregularity_corrected = float(outer_boundary.get('roughness_index', 0))
-                
-                wall_integrity_corrected = 1.0
-                if wall_metrics:
-                    wall_integrity_corrected = float(wall_metrics.get('wall_integrity_score', 1.0))
-                
-                print(f"   📊 CORRECTED VALUES FOR OVERRIDE:")
-                print(f"     Surface roughness: {surface_roughness_corrected:.1f} (should trigger if > 20.0)")
-                print(f"     Edge irregularity: {edge_irregularity_corrected:.3f}")
-                print(f"     Wall integrity: {wall_integrity_corrected:.3f}")
-                
-                # Apply the SAME override logic as multiprocessing workflow
-                override_applied = False
-                override_reason_manual = 'none'
-                new_classification = original_classification
-                
-                # Rule 1: HIGH surface roughness = definitely crumbly
-                if surface_roughness_corrected > 20.0:
-                    new_classification = 'crumbly'
-                    override_reason_manual = 'high_surface_roughness'
-                    override_applied = True
-                    print(f"   ✅ MANUAL Override: {original_classification} → crumbly (surface roughness {surface_roughness_corrected:.1f} > 20.0)")
-                
-                # Update the result
-                if override_applied:
-                    crumbly_result['classification'] = new_classification
-                    crumbly_result['confidence'] = 0.9
-                    crumbly_result['override_reason'] = override_reason_manual
+                crumbly_result = apply_classification_improvements(crumbly_result, debug=True)
                 
                 classification = crumbly_result['classification']
                 confidence_score = crumbly_result.get('confidence', 0.0)
                 crumbly_score = crumbly_result.get('crumbly_score', 0.5)
+                override_reason = crumbly_result.get('override_reason', 'none')
                 
-                override_reason = crumbly_result.get('override_reason', override_reason_manual)
-                
-                print(f"   📊 FINAL RESULTS:")
+                print(f"   📊 RESULTS:")
                 print(f"     Original: {original_classification} (conf: {original_confidence:.3f}, score: {original_score:.3f})")
                 print(f"     Final: {classification} (conf: {confidence_score:.3f}, score: {crumbly_score:.3f})")
                 if override_reason != 'none':
                     print(f"     🔧 Override applied: {override_reason}")
-                else:
-                    print(f"     ❌ NO OVERRIDE APPLIED - this should be 'crumbly' with roughness {surface_roughness_corrected:.1f}!")
                 
                 # Show texture analysis result
                 plt.subplot(2, 4, 5)
@@ -405,89 +358,113 @@ def show_step_by_step_analysis(image_path: str, model_path: str = None):
                 plt.axis('off')
                 plt.title('Workflow Validation')
                 
-                # Debug metrics - FIXED to extract from the correct nested structure
+                # Debug metrics - COMPREHENSIVE debugging to find surface roughness
                 plt.subplot(2, 4, 8)
                 plt.text(0.05, 0.9, "DEBUG METRICS", fontsize=9, weight='bold')
                 
-                # Extract metrics from the ACTUAL structure revealed by debug
-                surface_metrics = crumbly_result.get('surface_metrics', {})
-                boundary_metrics = crumbly_result.get('boundary_metrics', {})
-                wall_metrics = crumbly_result.get('wall_integrity_metrics', {})
+                # COMPREHENSIVE DEBUG: Print the entire crumbly_result structure
+                print(f"\n   🔍 COMPREHENSIVE CRUMBLY RESULT DEBUG:")
+                print(f"   📊 Top-level keys: {list(crumbly_result.keys())}")
                 
-                # Extract surface roughness from the nested structure
+                # Check for surface roughness in multiple possible locations
                 surface_roughness = None
-                if 'roughness_metrics' in surface_metrics:
-                    roughness_data = surface_metrics['roughness_metrics']
-                    # Use kernel_5 as a representative value (middle kernel size)
-                    if 'kernel_5' in roughness_data:
-                        surface_roughness = roughness_data['kernel_5'].get('mean_roughness')
-                    elif 'kernel_3' in roughness_data:
-                        surface_roughness = roughness_data['kernel_3'].get('mean_roughness')
-                
-                # Extract edge irregularity from boundary metrics
                 edge_irregularity = None
-                if 'outer_boundary' in boundary_metrics:
-                    outer_boundary = boundary_metrics['outer_boundary']
-                    edge_irregularity = outer_boundary.get('roughness_index')
+                wall_integrity = None
                 
-                # Extract wall integrity 
-                wall_integrity = wall_metrics.get('wall_integrity_score')
+                # Location 1: Direct top-level metrics
+                surface_metrics = crumbly_result.get('surface_metrics', {})
+                if surface_metrics:
+                    print(f"   📊 Direct surface_metrics: {surface_metrics}")
+                    surface_roughness = surface_metrics.get('roughness_score')
                 
-                print(f"   🎯 CORRECTED EXTRACTED VALUES:")
-                print(f"     Surface roughness (kernel_5): {surface_roughness}")
-                print(f"     Edge irregularity (roughness_index): {edge_irregularity}")
-                print(f"     Wall integrity (integrity_score): {wall_integrity}")
+                boundary_metrics = crumbly_result.get('boundary_metrics', {})
+                if boundary_metrics:
+                    print(f"   📊 Direct boundary_metrics: {boundary_metrics}")
+                    edge_irregularity = boundary_metrics.get('irregularity_score')
+                
+                wall_metrics = crumbly_result.get('wall_integrity_metrics', {})
+                if wall_metrics:
+                    print(f"   📊 Direct wall_integrity_metrics: {wall_metrics}")
+                    wall_integrity = wall_metrics.get('integrity_score')
+                
+                # Location 2: Nested in traditional_result (for hybrid)
+                if 'traditional_result' in crumbly_result:
+                    traditional_data = crumbly_result['traditional_result']
+                    print(f"   📊 Traditional result keys: {list(traditional_data.keys())}")
+                    
+                    trad_surface = traditional_data.get('surface_metrics', {})
+                    if trad_surface:
+                        print(f"   📊 Traditional surface_metrics: {trad_surface}")
+                        if surface_roughness is None:
+                            surface_roughness = trad_surface.get('roughness_score')
+                    
+                    trad_boundary = traditional_data.get('boundary_metrics', {})
+                    if trad_boundary:
+                        print(f"   📊 Traditional boundary_metrics: {trad_boundary}")
+                        if edge_irregularity is None:
+                            edge_irregularity = trad_boundary.get('irregularity_score')
+                    
+                    trad_wall = traditional_data.get('wall_integrity_metrics', {})
+                    if trad_wall:
+                        print(f"   📊 Traditional wall_integrity_metrics: {trad_wall}")
+                        if wall_integrity is None:
+                            wall_integrity = trad_wall.get('integrity_score')
+                
+                # Location 3: Check ALL keys for anything containing 'surface', 'roughness', etc.
+                print(f"   🔍 Searching ALL keys for surface/roughness metrics...")
+                for key, value in crumbly_result.items():
+                    if 'surface' in key.lower() or 'roughness' in key.lower():
+                        print(f"   📊 Found surface-related key '{key}': {value}")
+                    if isinstance(value, dict):
+                        for subkey, subvalue in value.items():
+                            if 'surface' in subkey.lower() or 'roughness' in subkey.lower():
+                                print(f"   📊 Found nested surface key '{key}.{subkey}': {subvalue}")
+                
+                # Location 4: Check for alternative metric names
+                alternative_names = [
+                    'texture_roughness', 'surface_texture', 'roughness', 'texture_score',
+                    'surface_roughness_score', 'boundary_roughness', 'edge_roughness'
+                ]
+                
+                for alt_name in alternative_names:
+                    if alt_name in crumbly_result:
+                        print(f"   📊 Found alternative metric '{alt_name}': {crumbly_result[alt_name]}")
+                        if surface_roughness is None:
+                            surface_roughness = crumbly_result[alt_name]
+                
+                # Final debug output
+                print(f"   🎯 FINAL EXTRACTED VALUES:")
+                print(f"     Surface roughness: {surface_roughness}")
+                print(f"     Edge irregularity: {edge_irregularity}")
+                print(f"     Wall integrity: {wall_integrity}")
                 
                 # Helper function to safely format numbers
                 def safe_format(value, default='N/A'):
                     if isinstance(value, (int, float)):
                         return f"{value:.3f}"
-                    elif hasattr(value, 'item'):  # Handle numpy scalars
-                        return f"{float(value):.3f}"
                     else:
                         return str(default)
                 
-                # Display the corrected metrics
+                # Display the metrics
                 plt.text(0.05, 0.8, f"Surface roughness:", fontsize=8)
-                plt.text(0.05, 0.75, f"  {safe_format(surface_roughness)} (kernel_5)", fontsize=7)
+                plt.text(0.05, 0.75, f"  {safe_format(surface_roughness)}", fontsize=7)
                 plt.text(0.05, 0.65, f"Edge irregularity:", fontsize=8)
-                plt.text(0.05, 0.6, f"  {safe_format(edge_irregularity)} (roughness_idx)", fontsize=7)
+                plt.text(0.05, 0.6, f"  {safe_format(edge_irregularity)}", fontsize=7)
                 plt.text(0.05, 0.5, f"Wall integrity:", fontsize=8)
-                plt.text(0.05, 0.45, f"  {safe_format(wall_integrity)} (integrity_score)", fontsize=7)
+                plt.text(0.05, 0.45, f"  {safe_format(wall_integrity)}", fontsize=7)
                 
-                # Show interpretation
-                if surface_roughness is not None and isinstance(surface_roughness, (int, float)):
-                    roughness_val = float(surface_roughness)
-                    if roughness_val > 25:
-                        roughness_interp = "HIGH (crumbly)"
-                    elif roughness_val > 15:
-                        roughness_interp = "MEDIUM"
-                    else:
-                        roughness_interp = "LOW (smooth)"
-                    plt.text(0.05, 0.35, f"Roughness: {roughness_interp}", fontsize=7)
+                # Show where we found the data
+                if surface_roughness is not None:
+                    plt.text(0.05, 0.35, f"✅ Found surface roughness", fontsize=7, color='green')
+                else:
+                    plt.text(0.05, 0.35, f"❌ Surface roughness missing", fontsize=7, color='red')
                 
                 plt.text(0.05, 0.25, f"Original: {original_classification}", fontsize=7)
                 plt.text(0.05, 0.2, f"Final: {classification}", fontsize=7)
                 if override_reason != 'none':
                     plt.text(0.05, 0.1, f"Override: {override_reason}", fontsize=6, color='red')
                 else:
-                    plt.text(0.05, 0.1, f"No override needed", fontsize=6)
-                
-                # Show the REAL classification issue
-                plt.text(0.05, 0.05, f"Roughness={safe_format(surface_roughness)}", fontsize=6)
-                
-                # Print analysis of why classification might be wrong
-                print(f"\n   🚨 CLASSIFICATION ANALYSIS:")
-                print(f"     Surface roughness: {surface_roughness:.1f} (VERY HIGH - should indicate crumbly)")
-                print(f"     Edge irregularity: {edge_irregularity:.3f} (moderate)")
-                print(f"     Wall integrity: {wall_integrity:.3f} (high - indicates good structure)")
-                print(f"     ❓ Why is this 'intermediate' with such high surface roughness?")
-                
-                # The issue: apply_classification_improvements() is looking for the wrong key names!
-                print(f"\n   🔧 CLASSIFICATION IMPROVEMENT ISSUE:")
-                print(f"     apply_classification_improvements() looks for 'roughness_score'")
-                print(f"     But actual data is in 'roughness_metrics.kernel_5.mean_roughness'")
-                print(f"     This is why the override rules aren't triggering!")
+                    plt.text(0.05, 0.1, f"No override", fontsize=6)
                 
                 plt.xlim(0, 1)
                 plt.ylim(0, 1)
