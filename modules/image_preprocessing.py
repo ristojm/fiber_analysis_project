@@ -10,6 +10,7 @@ from scipy import ndimage
 import matplotlib.pyplot as plt
 from typing import Tuple, Optional, Union
 import warnings
+from .debug_config import DEBUG_CONFIG
 
 def load_image(image_path: str) -> np.ndarray:
     """
@@ -458,6 +459,144 @@ def test_preprocessing_functions():
     except Exception as e:
         print(f"❌ Preprocessing test failed: {e}")
         return False
+
+def preprocess_for_analysis(image, remove_scale_bar=True, debug=None):
+    """
+    Preprocess image for analysis with optional scale bar removal.
+    
+    Args:
+        image: Input image (numpy array)
+        remove_scale_bar: If True, removes bottom scale bar region
+        debug: If True, shows debug visualizations (uses global config if None)
+    
+    Returns:
+        dict: {
+            'processed_image': preprocessed image without scale bar,
+            'original_image': original input image,
+            'processing_steps': list of applied steps,
+            'scale_bar_removed': boolean indicating if scale bar was removed
+        }
+    """
+    # Use global debug config if not specified
+    if debug is None:
+        debug = DEBUG_CONFIG.enabled
+    
+    if debug:
+        print(f"🔧 Preprocessing image with scale bar removal: {remove_scale_bar}")
+        print(f"   Input image shape: {image.shape}")
+    
+    try:
+        processing_steps = []
+        
+        # Check if enhanced preprocessing is available
+        try:
+            from . import enhance_contrast, denoise_image, normalize_image
+            HAS_BASIC_FUNCTIONS = True
+        except ImportError:
+            if debug:
+                print("⚠️ Basic preprocessing functions not found, using fallback")
+            HAS_BASIC_FUNCTIONS = False
+        
+        # Apply preprocessing steps
+        if HAS_BASIC_FUNCTIONS:
+            # Enhanced preprocessing pipeline
+            enhanced = enhance_contrast(image, method='clahe')
+            processing_steps.append('contrast_enhancement')
+            
+            denoised = denoise_image(enhanced, method='bilateral')
+            processing_steps.append('denoising')
+            
+            temp_processed = normalize_image(denoised)
+            processing_steps.append('normalization')
+            
+            if debug:
+                print(f"   ✅ Applied enhanced preprocessing pipeline")
+        else:
+            # Fallback preprocessing
+            if debug:
+                print("   ⚠️ Using basic fallback preprocessing")
+            
+            # Basic CLAHE contrast enhancement
+            if len(image.shape) == 3:
+                lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                lab[:,:,0] = clahe.apply(lab[:,:,0])
+                enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+            else:
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+                enhanced = clahe.apply(image)
+            processing_steps.append('basic_contrast_enhancement')
+            
+            # Basic bilateral filtering
+            if len(enhanced.shape) == 3:
+                denoised = cv2.bilateralFilter(enhanced, 9, 75, 75)
+            else:
+                denoised = cv2.bilateralFilter(enhanced, 9, 75, 75)
+            processing_steps.append('basic_denoising')
+            
+            # Basic normalization
+            temp_processed = cv2.normalize(denoised, None, 0, 255, cv2.NORM_MINMAX)
+            processing_steps.append('basic_normalization')
+        
+        # Remove scale bar region if requested
+        scale_bar_removed = False
+        if remove_scale_bar:
+            try:
+                # Try to use advanced scale bar removal
+                from . import remove_scale_bar_region
+                main_region, scale_bar_region = remove_scale_bar_region(temp_processed)
+                processed_image = main_region
+                processing_steps.append('advanced_scale_bar_removal')
+                scale_bar_removed = True
+                
+                if debug:
+                    print(f"   ✅ Advanced scale bar removal applied")
+                    print(f"   Processed image shape: {processed_image.shape}")
+                    
+            except ImportError:
+                # Fallback: manual crop of bottom 15%
+                height = temp_processed.shape[0]
+                crop_height = int(height * 0.8)  # Remove bottom 15%
+                processed_image = temp_processed[:crop_height, :]
+                processing_steps.append('fallback_scale_bar_removal')
+                scale_bar_removed = True
+                
+                if debug:
+                    print(f"   ⚠️ Using fallback scale bar removal (crop bottom 15%)")
+                    print(f"   Original height: {height}, cropped height: {crop_height}")
+                    print(f"   Processed image shape: {processed_image.shape}")
+        else:
+            processed_image = temp_processed
+            
+            if debug:
+                print(f"   ℹ️ Scale bar removal skipped")
+        
+        result = {
+            'processed_image': processed_image,
+            'original_image': image.copy(),
+            'processing_steps': processing_steps,
+            'scale_bar_removed': scale_bar_removed
+        }
+        
+        if debug:
+            print(f"   ✅ Preprocessing complete: {len(processing_steps)} steps applied")
+        
+        return result
+        
+    except Exception as e:
+        if debug:
+            print(f"   ❌ Preprocessing failed: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Return original image as fallback
+        return {
+            'processed_image': image,
+            'original_image': image,
+            'processing_steps': ['fallback_only'],
+            'scale_bar_removed': False,
+            'error': str(e)
+        }
 
 if __name__ == "__main__":
     test_preprocessing_functions()

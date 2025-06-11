@@ -33,7 +33,7 @@ print(f"   Project root: {project_root}")
 
 # Import the workflow functions we want to test
 try:
-    from Crumble_ML.multiprocessing_crumbly_workflow import (
+    from Crumble_ML.multiprocessing_crumbly_workflow2_edited import (
         preprocess_image_for_worker,
         create_optimal_fiber_mask,
         apply_classification_improvements,

@@ -26,6 +26,7 @@ from pathlib import Path
 import json
 from datetime import datetime
 import os
+from .debug_config import DEBUG_CONFIG
 
 # Try to import Intel-optimized libraries
 try:
@@ -1812,3 +1813,150 @@ __all__ = [
     'test_scale_detection_batch',
     'compare_ocr_backends'
 ]
+
+def detect_scale_bar_from_crop(image, crop_bottom_percent=20, debug=None):  # Changed default from 15 to 20
+    """
+    Detect scale bar by analyzing bottom crop region only.
+    FIXED: Better crop percentage for improved OCR accuracy.
+    """
+    # Use global debug config if not specified
+    if debug is None:
+        debug = DEBUG_CONFIG.enabled
+    
+    if debug:
+        print(f"🔧 Detecting scale bar from bottom {crop_bottom_percent}% crop")
+        print(f"   📐 Original image shape: {image.shape}")
+    
+    try:
+        # Crop bottom region - use larger percentage for better OCR
+        height = image.shape[0]
+        crop_start = int(height * (100 - crop_bottom_percent) / 100)
+        scale_bar_region = image[crop_start:, :]
+        
+        if debug:
+            print(f"   📏 Crop region: rows {crop_start}-{height} ({height-crop_start} pixels high)")
+            print(f"   📐 Cropped region shape: {scale_bar_region.shape}")
+        
+        # Validate crop region
+        if scale_bar_region.size == 0:
+            if debug:
+                print(f"   ❌ Empty crop region")
+            return {
+                'scale_detected': False,
+                'micrometers_per_pixel': 1.0,
+                'scale_bar_region': None,
+                'detection_method': 'failed_empty_crop',
+                'confidence': 0.0,
+                'error': 'Empty crop region'
+            }
+        
+        # Enhance the cropped region for better OCR
+        enhanced_region = scale_bar_region.copy()
+        
+        # Apply contrast enhancement to improve OCR accuracy
+        if len(enhanced_region.shape) == 3:
+            # Convert to grayscale for processing
+            import cv2
+            gray_region = cv2.cvtColor(enhanced_region, cv2.COLOR_BGR2GRAY)
+            # Apply CLAHE for better contrast
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            enhanced_gray = clahe.apply(gray_region)
+            # Convert back to 3-channel
+            enhanced_region = cv2.cvtColor(enhanced_gray, cv2.COLOR_GRAY2BGR)
+        
+        if debug:
+            print(f"   🔍 Enhanced region for better OCR accuracy")
+        
+        # Use existing scale detection on enhanced cropped region
+        try:
+            scale_detector = ScaleBarDetector(use_enhanced_detection=True)
+            if debug:
+                print(f"   🔍 Running enhanced scale detection on cropped region...")
+            
+            scale_result = scale_detector.detect_scale_bar(
+                enhanced_region,  # Use enhanced region
+                debug=debug, 
+                save_debug_image=debug and DEBUG_CONFIG.save_images,
+                output_dir=DEBUG_CONFIG.get_debug_path("scale_detection") if debug else None
+            )
+            
+        except Exception as scale_error:
+            if debug:
+                print(f"   ⚠️ Enhanced scale detector failed: {scale_error}")
+                print(f"   🔄 Trying basic scale detection...")
+            
+            # Fallback to basic scale detection
+            try:
+                scale_detector = ScaleBarDetector(use_enhanced_detection=False)
+                scale_result = scale_detector.detect_scale_bar(
+                    enhanced_region,
+                    debug=debug,
+                    save_debug_image=False,
+                    output_dir=None
+                )
+            except Exception as basic_error:
+                if debug:
+                    print(f"   ❌ Basic scale detector also failed: {basic_error}")
+                scale_result = None
+        
+        # Process scale detection result
+        if scale_result and isinstance(scale_result, dict):
+            # Add crop information to result
+            scale_result['scale_bar_region'] = scale_bar_region
+            scale_result['crop_bottom_percent'] = crop_bottom_percent
+            scale_result['crop_start_row'] = crop_start
+            scale_result['detection_method'] = 'enhanced_bottom_crop_analysis'
+            scale_result['enhanced_processing'] = True
+            
+            # Ensure we have the required fields
+            if 'scale_detected' not in scale_result:
+                scale_result['scale_detected'] = False
+            if 'micrometers_per_pixel' not in scale_result:
+                scale_result['micrometers_per_pixel'] = 1.0
+            if 'confidence' not in scale_result:
+                scale_result['confidence'] = 0.0
+            
+            if debug:
+                scale_detected = scale_result.get('scale_detected', False)
+                scale_factor = scale_result.get('micrometers_per_pixel', 1.0)
+                confidence = scale_result.get('confidence', 0.0)
+                print(f"   ✅ Enhanced scale detection result:")
+                print(f"     Detected: {scale_detected}")
+                print(f"     Scale factor: {scale_factor:.4f} μm/pixel")
+                print(f"     Confidence: {confidence:.2f}")
+                
+                if scale_detected:
+                    print(f"   🎯 Scale bar successfully detected from enhanced bottom crop!")
+                else:
+                    print(f"   ⚠️ No scale bar detected in enhanced bottom crop region")
+        else:
+            if debug:
+                print(f"   ❌ Scale detection returned invalid result: {type(scale_result)}")
+            
+            # Create fallback result
+            scale_result = {
+                'scale_detected': False,
+                'micrometers_per_pixel': 1.0,
+                'scale_bar_region': scale_bar_region,
+                'crop_bottom_percent': crop_bottom_percent,
+                'detection_method': 'failed_invalid_result',
+                'confidence': 0.0
+            }
+        
+        return scale_result
+        
+    except Exception as e:
+        if debug:
+            print(f"   ❌ Enhanced scale bar detection failed with exception: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return {
+            'scale_detected': False,
+            'micrometers_per_pixel': 1.0,
+            'scale_bar_region': None,
+            'crop_bottom_percent': crop_bottom_percent,
+            'detection_method': 'failed_exception',
+            'confidence': 0.0,
+            'error': str(e)
+        }

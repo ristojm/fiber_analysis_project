@@ -9,6 +9,7 @@ from skimage import filters, morphology, measure, feature
 from scipy import ndimage, spatial
 from typing import Tuple, Dict, List, Optional
 import matplotlib.pyplot as plt
+from .debug_config import DEBUG_CONFIG
 
 class FiberTypeDetector:
     """
@@ -1095,3 +1096,214 @@ def visualize_fiber_type_analysis(image: np.ndarray, analysis_data: Dict, figsiz
         
         plt.tight_layout()
         plt.show()
+
+def extract_fiber_mask_from_analysis(image, fiber_analysis_data, debug=None):
+    """
+    Extract fiber mask from fiber type analysis results.
+    
+    Args:
+        image: Preprocessed image for shape reference
+        fiber_analysis_data: Results from classify_fiber_type()
+        debug: Enable debug output (uses global config if None)
+    
+    Returns:
+        numpy.ndarray: Binary fiber mask (uint8, 0 or 255)
+    """
+    # Use global debug config if not specified
+    if debug is None:
+        debug = DEBUG_CONFIG.enabled
+    
+    if debug:
+        print(f"🔧 Extracting fiber mask from analysis data...")
+        if fiber_analysis_data:
+            print(f"   📊 Analysis data keys: {list(fiber_analysis_data.keys())}")
+        else:
+            print(f"   ⚠️ No analysis data provided")
+    
+    # Get fiber mask from analysis data
+    fiber_mask = fiber_analysis_data.get('fiber_mask') if fiber_analysis_data else None
+    
+    if fiber_mask is not None and isinstance(fiber_mask, np.ndarray):
+        # Ensure proper format
+        if fiber_mask.dtype != np.uint8:
+            if debug:
+                print(f"   🔄 Converting mask from {fiber_mask.dtype} to uint8")
+            fiber_mask = (fiber_mask > 0).astype(np.uint8) * 255
+        
+        # Check if mask has sufficient content
+        mask_area = np.sum(fiber_mask > 0)
+        
+        if debug:
+            total_pixels = fiber_mask.size
+            coverage = mask_area / total_pixels * 100
+            print(f"   ✅ Fiber mask extracted: {mask_area:,} pixels")
+            print(f"   📐 Coverage: {coverage:.1f}% of image")
+        
+        if mask_area > 1000:  # Reasonable minimum
+            return fiber_mask
+        else:
+            if debug:
+                print(f"   ⚠️ Mask too small: {mask_area} pixels, using fallback")
+    else:
+        if debug:
+            print(f"   ❌ No valid fiber mask found in analysis data")
+            print(f"   📊 Fiber mask type: {type(fiber_mask)}")
+    
+    # Return empty mask as fallback
+    if debug:
+        print(f"   🔄 Returning empty mask as fallback")
+    return np.zeros(image.shape[:2], dtype=np.uint8)
+
+
+def create_optimal_fiber_mask(image, fiber_analysis_data, method='best_available', debug=None):
+    """
+    Create optimal fiber mask using best available approach.
+    FIXED: Better handling of individual fiber results and contour processing.
+    """
+    # Use global debug config if not specified
+    if debug is None:
+        debug = DEBUG_CONFIG.enabled
+    
+    if debug:
+        print(f"🔧 Creating optimal fiber mask using method: {method}")
+        print(f"   📐 Image shape: {image.shape}")
+    
+    # Method 1: Try individual fiber selection (best quality)
+    individual_results = fiber_analysis_data.get('individual_results', []) if fiber_analysis_data else []
+    
+    if individual_results and method in ['individual_selection', 'best_available']:
+        if debug:
+            print(f"📊 Found {len(individual_results)} individual fiber results")
+            print(f"   🎯 Attempting individual fiber selection...")
+        
+        # Start with empty mask
+        fiber_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+        fibers_processed = 0
+        
+        for i, fiber_result in enumerate(individual_results):
+            fiber_contour = fiber_result.get('fiber_contour')
+            fiber_type = fiber_result.get('fiber_type', 'unknown')
+            
+            if fiber_contour is not None and len(fiber_contour) > 0:
+                try:
+                    # FIXED: Ensure contour is proper format
+                    if isinstance(fiber_contour, list):
+                        fiber_contour = np.array(fiber_contour)
+                    
+                    # Ensure contour has proper shape (N, 1, 2) or (N, 2)
+                    if len(fiber_contour.shape) == 2 and fiber_contour.shape[1] == 2:
+                        # Convert (N, 2) to (N, 1, 2) for OpenCV
+                        fiber_contour = fiber_contour.reshape((-1, 1, 2))
+                    
+                    # Ensure integer coordinates
+                    fiber_contour = fiber_contour.astype(np.int32)
+                    
+                    # Validate contour bounds
+                    if (fiber_contour[:, 0, 0].min() >= 0 and 
+                        fiber_contour[:, 0, 0].max() < image.shape[1] and
+                        fiber_contour[:, 0, 1].min() >= 0 and 
+                        fiber_contour[:, 0, 1].max() < image.shape[0]):
+                        
+                        # Create mask for this fiber
+                        single_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+                        cv2.fillPoly(single_mask, [fiber_contour], 255)
+                        
+                        # Check if mask was created successfully
+                        mask_area = np.sum(single_mask > 0)
+                        if mask_area > 100:  # Minimum reasonable area
+                            
+                            # For hollow fibers, exclude potential lumen
+                            if fiber_type == 'hollow_fiber':
+                                if debug:
+                                    print(f"   🕳️ Processing hollow fiber {i}, excluding lumen...")
+                                
+                                # Calculate contour center more robustly
+                                moments = cv2.moments(fiber_contour)
+                                if moments['m00'] != 0:
+                                    center_x = int(moments['m10'] / moments['m00'])
+                                    center_y = int(moments['m01'] / moments['m00'])
+                                else:
+                                    center_x = int(np.mean(fiber_contour[:, 0, 0]))
+                                    center_y = int(np.mean(fiber_contour[:, 0, 1]))
+                                
+                                # Create region around center for lumen detection
+                                radius = 30
+                                y_min = max(0, center_y - radius)
+                                y_max = min(image.shape[0], center_y + radius)
+                                x_min = max(0, center_x - radius)
+                                x_max = min(image.shape[1], center_x + radius)
+                                
+                                center_region = image[y_min:y_max, x_min:x_max]
+                                
+                                if center_region.size > 0:
+                                    # Find dark regions (potential lumen) using adaptive threshold
+                                    if len(center_region.shape) == 3:
+                                        gray_region = cv2.cvtColor(center_region, cv2.COLOR_BGR2GRAY)
+                                    else:
+                                        gray_region = center_region
+                                    
+                                    # Use Otsu's method for automatic threshold
+                                    _, potential_lumen = cv2.threshold(gray_region, 0, 255, 
+                                                                     cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+                                    
+                                    # Apply morphological operations to clean up lumen detection
+                                    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                                    potential_lumen = cv2.morphologyEx(potential_lumen, cv2.MORPH_CLOSE, kernel)
+                                    potential_lumen = cv2.morphologyEx(potential_lumen, cv2.MORPH_OPEN, kernel)
+                                    
+                                    # Create full-size lumen mask
+                                    lumen_mask = np.zeros(image.shape[:2], dtype=np.uint8)
+                                    lumen_mask[y_min:y_max, x_min:x_max] = potential_lumen
+                                    
+                                    # Remove detected lumen from fiber mask
+                                    single_mask[lumen_mask > 0] = 0
+                                    
+                                    if debug:
+                                        lumen_area = np.sum(potential_lumen > 0)
+                                        print(f"     ✅ Lumen excluded: {lumen_area:,} pixels")
+                            
+                            # Add to combined mask
+                            fiber_mask = cv2.bitwise_or(fiber_mask, single_mask)
+                            fibers_processed += 1
+                            
+                            if debug:
+                                final_fiber_area = np.sum(single_mask > 0)
+                                print(f"   ✅ Fiber {i}: {fiber_type}, area: {final_fiber_area:,} pixels")
+                        else:
+                            if debug:
+                                print(f"   ⚠️ Fiber {i}: mask too small ({mask_area} pixels)")
+                    else:
+                        if debug:
+                            print(f"   ⚠️ Fiber {i}: contour out of bounds")
+                        
+                except Exception as e:
+                    if debug:
+                        print(f"   ⚠️ Error processing fiber {i}: {e}")
+                    continue
+            else:
+                if debug:
+                    print(f"   ⚠️ Fiber {i}: invalid or empty contour")
+        
+        # Check if we got a good result from individual selection
+        mask_area = np.sum(fiber_mask > 0)
+        if mask_area > 1000:  # Sufficient content
+            if debug:
+                print(f"✅ Optimal mask created from individual selection:")
+                print(f"   📊 Processed {fibers_processed}/{len(individual_results)} fibers")
+                print(f"   📐 Total mask area: {mask_area:,} pixels")
+            return fiber_mask
+        else:
+            if debug:
+                print(f"⚠️ Individual selection result too small: {mask_area} pixels")
+    
+    # Method 2: Fallback to general fiber mask
+    if debug:
+        print(f"🔄 Falling back to general fiber mask extraction...")
+    
+    general_mask = extract_fiber_mask_from_analysis(image, fiber_analysis_data, debug=debug)
+    
+    if debug:
+        final_area = np.sum(general_mask > 0)
+        print(f"🔄 Returning general mask: {final_area:,} pixels")
+    
+    return general_mask

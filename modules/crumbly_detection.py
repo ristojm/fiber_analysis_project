@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from typing import Dict, List, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
+from .debug_config import DEBUG_CONFIG
 
 CRUMBLY_DEBUG = False  # Set to True for detailed debugging, False for clean output
 
@@ -1640,6 +1641,175 @@ def test_crumbly_detector():
         print(f"❌ Test failed: {e}")
         return False
 
+# Add this fix to modules/crumbly_detection.py in the improve_crumbly_classification function
+
+def improve_crumbly_classification(image, fiber_mask, initial_classification, 
+                                  porosity_data=None, debug=None):
+    """
+    Apply classification improvements using porosity and texture analysis.
+    FIXED: Better handling of data types and mask formats.
+    """
+    # Use global debug config if not specified
+    if debug is None:
+        debug = DEBUG_CONFIG.enabled
+    
+    if debug:
+        print(f"🔧 Improving crumbly classification...")
+        print(f"   📊 Initial classification: {initial_classification}")
+        print(f"   📊 Fiber mask type: {type(fiber_mask)}, shape: {fiber_mask.shape if hasattr(fiber_mask, 'shape') else 'N/A'}")
+        if porosity_data:
+            print(f"   📊 Porosity data available: {list(porosity_data.keys()) if isinstance(porosity_data, dict) else type(porosity_data)}")
+    
+    try:
+        # Ensure fiber_mask is proper numpy array format
+        if not isinstance(fiber_mask, np.ndarray):
+            if debug:
+                print(f"   🔄 Converting fiber_mask from {type(fiber_mask)} to numpy array")
+            fiber_mask = np.array(fiber_mask)
+        
+        # Ensure fiber_mask is uint8 binary mask
+        if fiber_mask.dtype != np.uint8:
+            if debug:
+                print(f"   🔄 Converting fiber_mask from {fiber_mask.dtype} to uint8")
+            fiber_mask = (fiber_mask > 0).astype(np.uint8) * 255
+        
+        # Ensure 2D mask
+        if len(fiber_mask.shape) > 2:
+            if debug:
+                print(f"   🔄 Converting fiber_mask from {fiber_mask.shape} to 2D")
+            fiber_mask = fiber_mask[:, :, 0] if fiber_mask.shape[2] > 0 else fiber_mask.squeeze()
+        
+        # Extract initial values with robust handling
+        if isinstance(initial_classification, dict):
+            original_classification = initial_classification.get('classification', 'unknown')
+            original_confidence = initial_classification.get('confidence', 0.0)
+        elif isinstance(initial_classification, str):
+            original_classification = initial_classification
+            original_confidence = 0.5
+        else:
+            if debug:
+                print(f"   ⚠️ Invalid initial classification type: {type(initial_classification)}")
+            original_classification = 'unknown'
+            original_confidence = 0.0
+        
+        if debug:
+            print(f"   📈 Original: {original_classification} (confidence: {original_confidence:.2f})")
+        
+        # Initialize result
+        result = {
+            'final_classification': original_classification,
+            'confidence': original_confidence,
+            'override_reason': 'none',
+            'improvement_applied': False,
+            'original_classification': original_classification
+        }
+        
+        # Apply improvement logic based on porosity data
+        if porosity_data:
+            # Handle different porosity data formats
+            if isinstance(porosity_data, dict):
+                porosity_percentage = porosity_data.get('porosity_percentage', 0)
+                pore_count = porosity_data.get('total_pores', 0)
+                avg_pore_size = porosity_data.get('average_pore_size', 0)
+            elif isinstance(porosity_data, (int, float, np.number)):
+                # Handle case where porosity_data is just a number
+                porosity_percentage = float(porosity_data)
+                pore_count = 0
+                avg_pore_size = 0
+                if debug:
+                    print(f"   🔄 Porosity data was numeric: {porosity_percentage}")
+            else:
+                if debug:
+                    print(f"   ⚠️ Unknown porosity data format: {type(porosity_data)}")
+                porosity_percentage = 0
+                pore_count = 0
+                avg_pore_size = 0
+            
+            if debug:
+                print(f"   📊 Porosity context:")
+                print(f"     Porosity: {porosity_percentage:.1f}%")
+                print(f"     Pore count: {pore_count}")
+                print(f"     Avg pore size: {avg_pore_size:.2f}")
+            
+            # Apply improvement rules (same as before)
+            if (original_classification == 'crumbly' and 
+                porosity_percentage > 15 and 
+                pore_count > 50 and 
+                original_confidence < 0.8):
+                
+                result['final_classification'] = 'intermediate'
+                result['confidence'] = 0.6
+                result['override_reason'] = 'high_organized_porosity'
+                result['improvement_applied'] = True
+                
+                if debug:
+                    print(f"   🔄 Rule 1 applied: High organized porosity detected")
+            
+            elif (original_classification in ['not', 'not_crumbly'] and 
+                  porosity_percentage < 5):
+                
+                result['confidence'] = min(1.0, original_confidence + 0.2)
+                result['override_reason'] = 'low_porosity_confirmation'
+                result['improvement_applied'] = True
+                
+                if debug:
+                    print(f"   ✅ Rule 2 applied: Low porosity confirms non-crumbly")
+        else:
+            if debug:
+                print(f"   ℹ️ No porosity-based improvements applied (no valid porosity data)")
+        
+        # Additional fiber mask based improvements (with safe operations)
+        if fiber_mask is not None and fiber_mask.size > 0:
+            try:
+                # Safe mask analysis
+                mask_area = np.sum(fiber_mask > 0)
+                total_area = fiber_mask.size
+                mask_coverage = mask_area / total_area if total_area > 0 else 0
+                
+                if debug:
+                    print(f"   📐 Fiber mask coverage: {mask_coverage*100:.1f}%")
+                
+                # Rule: Very low mask coverage might indicate processing issues
+                if mask_coverage < 0.1 and result['confidence'] > 0.5:
+                    result['confidence'] = max(0.2, result['confidence'] - 0.3)
+                    result['override_reason'] = result['override_reason'] + '_low_mask_coverage' if result['override_reason'] != 'none' else 'low_mask_coverage'
+                    result['improvement_applied'] = True
+                    
+                    if debug:
+                        print(f"   ⚠️ Rule: Low mask coverage detected")
+                        
+            except Exception as mask_error:
+                if debug:
+                    print(f"   ⚠️ Mask analysis failed: {mask_error}")
+        
+        # Final validation and summary
+        if debug:
+            if result['improvement_applied']:
+                print(f"   ✅ Classification improvement applied:")
+                print(f"     Original: {original_classification} (conf: {original_confidence:.2f})")
+                print(f"     Final: {result['final_classification']} (conf: {result['confidence']:.2f})")
+                print(f"     Reason: {result['override_reason']}")
+            else:
+                print(f"   ℹ️ No improvements applied - keeping original classification")
+        
+        return result
+        
+    except Exception as e:
+        if debug:
+            print(f"   ❌ Classification improvement failed: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # Return safe fallback
+        return {
+            'final_classification': 'unknown',
+            'confidence': 0.0,
+            'override_reason': 'error_fallback',
+            'improvement_applied': False,
+            'original_classification': 'unknown',
+            'error': str(e)
+        }
+    
 if __name__ == "__main__":
     # Run quick test
     test_crumbly_detector()
