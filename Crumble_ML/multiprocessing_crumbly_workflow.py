@@ -109,36 +109,60 @@ except ImportError as e:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
-# ===== IMPORT REORGANIZED MODULES =====
-print("🔧 Loading reorganized SEM Fiber Analysis modules...")
+# ===== IMPORT CORE MODULES =====
+print("🔧 Loading SEM Fiber Analysis modules...")
 
-# Import all reorganized functions from modules
-from modules import (
-    load_image, preprocess_for_analysis, 
-    detect_fiber_type, create_optimal_fiber_mask, extract_fiber_mask_from_analysis,
-    detect_scale_bar_from_crop, CrumblyDetector, improve_crumbly_classification,
-    enable_global_debug, disable_global_debug, is_debug_enabled,
-    HAS_ENHANCED_PREPROCESSING, HAS_ENHANCED_FIBER_DETECTION,
-    HAS_ENHANCED_SCALE_DETECTION, HAS_ENHANCED_CRUMBLY_DETECTION,
-    POROSITY_AVAILABLE, POROSITY_TYPE
-)
+# Track available modules
+MODULES_LOADED = {}
 
-# Track available modules (updated)
-MODULES_LOADED = {
-    'core': True,  # Always true since we import from modules
-    'image_preprocessing': HAS_ENHANCED_PREPROCESSING,
-    'fiber_type_detection': HAS_ENHANCED_FIBER_DETECTION,
-    'scale_detection': HAS_ENHANCED_SCALE_DETECTION,
-    'crumbly_detection': HAS_ENHANCED_CRUMBLY_DETECTION,
-    'porosity_analysis': POROSITY_AVAILABLE
-}
-
-print("✅ Reorganized modules loaded successfully!")
-print(f"   Enhanced preprocessing: {HAS_ENHANCED_PREPROCESSING}")
-print(f"   Enhanced fiber detection: {HAS_ENHANCED_FIBER_DETECTION}")
-print(f"   Enhanced scale detection: {HAS_ENHANCED_SCALE_DETECTION}")
-print(f"   Enhanced crumbly detection: {HAS_ENHANCED_CRUMBLY_DETECTION}")
-print(f"   Porosity analysis: {POROSITY_AVAILABLE} ({POROSITY_TYPE})")
+try:
+    # Import the entire modules package which now properly exposes everything
+    import modules
+    
+    # Import all needed functions and flags
+    from modules import (
+        # Core functions
+        load_image, preprocess_for_analysis, 
+        detect_fiber_type, create_optimal_fiber_mask, extract_fiber_mask_from_analysis,
+        detect_scale_bar_from_crop, CrumblyDetector, improve_crumbly_classification,
+        standardize_porosity_result,
+        
+        # Debug control
+        enable_global_debug, disable_global_debug, is_debug_enabled,
+        
+        # Availability flags
+        HAS_ENHANCED_PREPROCESSING, HAS_ENHANCED_FIBER_DETECTION,
+        HAS_ENHANCED_SCALE_DETECTION, HAS_ENHANCED_CRUMBLY_DETECTION,
+        POROSITY_AVAILABLE, POROSITY_TYPE
+    )
+    
+    # Import specific classes we need
+    from modules import FiberTypeDetector, PorosityAnalyzer
+    
+    # Conditional imports for porosity
+    if POROSITY_AVAILABLE:
+        from modules import analyze_fiber_porosity, quick_porosity_check
+    
+    MODULES_LOADED = {
+        'core': True,
+        'image_preprocessing': HAS_ENHANCED_PREPROCESSING,
+        'fiber_type_detection': HAS_ENHANCED_FIBER_DETECTION,
+        'scale_detection': HAS_ENHANCED_SCALE_DETECTION,
+        'crumbly_detection': HAS_ENHANCED_CRUMBLY_DETECTION,
+        'porosity_analysis': POROSITY_AVAILABLE
+    }
+    
+    print("✅ All modules loaded successfully!")
+    print(f"   Enhanced preprocessing: {HAS_ENHANCED_PREPROCESSING}")
+    print(f"   Enhanced fiber detection: {HAS_ENHANCED_FIBER_DETECTION}")
+    print(f"   Enhanced scale detection: {HAS_ENHANCED_SCALE_DETECTION}")
+    print(f"   Enhanced crumbly detection: {HAS_ENHANCED_CRUMBLY_DETECTION}")
+    print(f"   Porosity analysis: {POROSITY_AVAILABLE} ({POROSITY_TYPE})")
+    
+except ImportError as e:
+    print(f"❌ Failed to import modules: {e}")
+    print("   Please ensure all module files are in the modules/ directory")
+    raise
 
 # ===== WORKER FUNCTIONS =====
 # REPLACE the process_single_image_worker function in multiprocessing_crumbly_workflow.py with this:
@@ -147,9 +171,6 @@ def process_single_image_orchestrator(worker_args: Dict) -> Dict:
     """
     Orchestrates single image processing using modular functions.
     Contains NO processing logic - only workflow coordination.
-    
-    This replaces the old process_single_image_worker function with clean
-    orchestration that calls the reorganized module functions.
     """
     image_path = worker_args['image_path']
     debug = worker_args.get('debug', False)
@@ -164,25 +185,8 @@ def process_single_image_orchestrator(worker_args: Dict) -> Dict:
     try:
         # Enable debug if requested
         if debug:
-            from modules import enable_global_debug
             enable_global_debug(save_images=True, show_plots=False)
             print(f"\n🔄 Processing: {Path(image_path).name}")
-        
-        # Import all the reorganized functions
-        from modules.image_preprocessing import load_image, preprocess_for_analysis
-        from modules.scale_detection import detect_scale_bar_from_crop
-        from modules.fiber_type_detection import FiberTypeDetector, create_optimal_fiber_mask
-        
-        # Optional imports based on availability
-        porosity_data = None
-        if MODULES_LOADED.get('porosity_analysis'):
-            if POROSITY_TYPE == 'fast_refined':
-                from modules.porosity_analysis import analyze_fiber_porosity
-            else:
-                from modules.porosity_analysis import quick_porosity_check
-        
-        if MODULES_LOADED.get('crumbly_detection'):
-            from modules.crumbly_detection import CrumblyDetector, improve_crumbly_classification
         
         # STEP 1: Load original image
         if debug:
@@ -288,37 +292,13 @@ def process_single_image_orchestrator(worker_args: Dict) -> Dict:
                 else:
                     porosity_result = quick_porosity_check(processed_image, fiber_mask, scale_factor)
                 
-                # FIXED: Ensure porosity_data is always a dict
-                if isinstance(porosity_result, dict):
-                    porosity_data = porosity_result
-                elif isinstance(porosity_result, (int, float, np.number)):
-                    # Convert single number to dict format
-                    porosity_data = {
-                        'porosity_percentage': float(porosity_result),
-                        'total_pores': 0,
-                        'average_pore_size': 0.0,
-                        'pore_areas': [],
-                        'detection_method': 'single_value_conversion'
-                    }
-                    if debug:
-                        print(f"   🔄 Converted single porosity value to dict: {float(porosity_result):.1f}%")
-                else:
-                    # Unknown format, create default dict
-                    porosity_data = {
-                        'porosity_percentage': 0.0,
-                        'total_pores': 0,
-                        'average_pore_size': 0.0,
-                        'pore_areas': [],
-                        'detection_method': 'fallback_unknown_format',
-                        'original_type': str(type(porosity_result))
-                    }
-                    if debug:
-                        print(f"   ⚠️ Unknown porosity format {type(porosity_result)}, using fallback")
+                # Use the standardize function from modules
+                porosity_data = standardize_porosity_result(porosity_result)
                 
                 result['porosity'] = porosity_data
                 result['processing_steps'].append('porosity_analysis')
                 
-                if debug and porosity_data:
+                if debug:
                     porosity_pct = porosity_data.get('porosity_percentage', 0)
                     pore_count = porosity_data.get('total_pores', 0)
                     print(f"   ✅ Porosity: {porosity_pct:.1f}%, {pore_count} pores")
@@ -339,45 +319,23 @@ def process_single_image_orchestrator(worker_args: Dict) -> Dict:
             try:
                 crumbly_detector = CrumblyDetector()
                 
-                # FIXED: Ensure all inputs are proper format
-                # Ensure fiber_mask is proper uint8 format
-                if not isinstance(fiber_mask, np.ndarray):
-                    fiber_mask_clean = np.array(fiber_mask, dtype=np.uint8)
-                elif fiber_mask.dtype != np.uint8:
-                    fiber_mask_clean = (fiber_mask > 0).astype(np.uint8) * 255
-                else:
-                    fiber_mask_clean = fiber_mask.copy()
-                
-                # Ensure 2D mask
-                if len(fiber_mask_clean.shape) > 2:
-                    fiber_mask_clean = fiber_mask_clean[:, :, 0] if fiber_mask_clean.shape[2] > 0 else fiber_mask_clean.squeeze()
-                
-                # Ensure scale_factor is a number
-                if not isinstance(scale_factor, (int, float)):
-                    scale_factor_clean = 1.0
-                    if debug:
-                        print(f"   🔄 Invalid scale factor type, using 1.0")
-                else:
-                    scale_factor_clean = float(scale_factor)
-                
+                # The mask should already be in proper format from create_optimal_fiber_mask
                 initial_classification = crumbly_detector.analyze_crumbly_texture(
-                    processed_image, fiber_mask_clean, scale_factor_clean
+                    processed_image, 
+                    fiber_mask,  # Already uint8 format
+                    scale_factor=scale_factor,
+                    porosity_data=porosity_data  # Pass the porosity data
                 )
                 
                 # STEP 8: Classification improvement
                 if debug:
                     print(f"⚡ Step 8: Classification improvement...")
                 
-                # Ensure porosity data is in correct format for improvement
-                porosity_for_improvement = result.get('porosity')
-                if porosity_for_improvement and 'error' in porosity_for_improvement:
-                    porosity_for_improvement = None  # Don't use error data
-                
                 final_classification = improve_crumbly_classification(
                     processed_image, 
-                    fiber_mask_clean, 
+                    fiber_mask,  # Already uint8 format
                     initial_classification, 
-                    porosity_data=porosity_for_improvement, 
+                    porosity_data=porosity_data, 
                     debug=debug
                 )
                 
@@ -389,7 +347,7 @@ def process_single_image_orchestrator(worker_args: Dict) -> Dict:
                 result['processing_steps'].append('crumbly_analysis')
                 
                 if debug:
-                    initial_class = initial_classification.get('classification', 'unknown') if isinstance(initial_classification, dict) else str(initial_classification)
+                    initial_class = initial_classification.get('classification', 'unknown')
                     final_class = final_classification.get('final_classification', 'unknown')
                     improved = final_classification.get('improvement_applied', False)
                     print(f"   ✅ Crumbly analysis: {initial_class} → {final_class} (improved: {improved})")
@@ -400,6 +358,7 @@ def process_single_image_orchestrator(worker_args: Dict) -> Dict:
                     import traceback
                     traceback.print_exc()
                 result['crumbly_analysis'] = {'error': str(e)}
+                
         else:
             if debug:
                 print(f"   ⚠️ Crumbly detection not available")
